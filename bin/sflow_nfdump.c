@@ -1,8 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2016, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2021, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -61,10 +58,11 @@
 #include <stdint.h>
 #endif
 
+#include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "nfx.h"
-#include "nf_common.h"
-#include "util.h"
+#include "output_raw.h"
 #include "bookkeeper.h"
 #include "collector.h"
 
@@ -73,26 +71,20 @@
 #include "sflow_process.h"
 #include "sflow_nfdump.h"
 
-#ifndef DEVEL
-#   define dbg_printf(...) /* printf(__VA_ARGS__) */
-#else
-#   define dbg_printf(...) printf(__VA_ARGS__)
-#endif
-
 #define MAX_SFLOW_EXTENSIONS 8
 
 typedef struct exporter_sflow_s {
 	// link chain
 	struct exporter_sflow_s *next;
 
-	// generic exporter information
+	// exporter information
 	exporter_info_record_t info;
 
     uint64_t    packets;            // number of packets sent by this exporter
     uint64_t    flows;              // number of flow records sent by this exporter
     uint32_t    sequence_failure;   // number of sequence failues
 
-    generic_sampler_t       *sampler;
+    sampler_t       *sampler;
 
 	// extension map
 	// extension maps are common for all exporters
@@ -101,7 +93,6 @@ typedef struct exporter_sflow_s {
 } exporter_sflow_t;
 
 extern extension_descriptor_t extension_descriptor[];
-extern FlowSource_t *FlowSource;
 
 /* module limited globals */
 
@@ -128,6 +119,7 @@ static uint16_t sflow_extensions[] = {
 	EX_MULIPLE, 
 	EX_VLAN, 
 	EX_MAC_1, 
+	EX_MPLS,
 	EX_RECEIVED,
 	0 			// final token
 };
@@ -152,8 +144,7 @@ static struct sflow_ip_extensions_s {
 #define SFLOW_NEXT_HOP_BGP 2
 #define SFLOW_ROUTER_IP    4
 
-extern int verbose;
-
+static int verbose = 0;
 static int IP_extension_mask = 0;
 
 static int Setup_Extension_Info(FlowSource_t *fs, exporter_sflow_t	*exporter, int num);
@@ -162,10 +153,11 @@ static exporter_sflow_t *GetExporter(FlowSource_t *fs, uint32_t agentSubId, uint
 
 #include "inline.c"
 #include "nffile_inline.c"
-#include "collector_inline.c"
 
-void Init_sflow(void) {
+void Init_sflow(int v) {
 int i, id;
+
+	verbose = v;
 
 	i=0;
 	Num_enabled_extensions = 0;
@@ -211,6 +203,12 @@ int i, id;
 void Process_sflow(void *in_buff, ssize_t in_buff_cnt, FlowSource_t *fs) {
 SFSample 	sample;
 int 		exceptionVal;
+#ifdef DEVEL
+static int pkg_num = 0;
+
+	pkg_num++;
+	printf("Process_sflow: Next packet: %i\n", pkg_num);
+#endif
 
 	memset(&sample, 0, sizeof(sample));
 	sample.rawSample = in_buff;
@@ -251,7 +249,7 @@ int i, id, extension_size, map_size, map_index;
 		map_size += 2;
 
 
-	// Create a generic sflow extension map
+	// Create a sflow extension map
 	exporter->sflow_extension_info[num].map = (extension_map_t *)malloc((size_t)map_size);
 	if ( !exporter->sflow_extension_info[num].map ) {
 		LogError("SFLOW: malloc() allocation error in %s line %d: %s", __FILE__, __LINE__, strerror(errno) );
@@ -322,7 +320,7 @@ int i, id, extension_size, map_size, map_index;
 
 static exporter_sflow_t *GetExporter(FlowSource_t *fs, uint32_t agentSubId, uint32_t meanSkipCount) {
 exporter_sflow_t **e = (exporter_sflow_t **)&(fs->exporter_data);
-generic_sampler_t *sampler;
+sampler_t *sampler;
 #define IP_STRING_LEN   40
 char ipstr[IP_STRING_LEN];
 int i;
@@ -370,7 +368,7 @@ int i;
 		(*e)->sflow_extension_info[i].map = NULL;
 	}
 
-	sampler = (generic_sampler_t *)malloc(sizeof(generic_sampler_t));
+	sampler = (sampler_t *)malloc(sizeof(sampler_t));
 	if ( !sampler ) {
 		LogError("SFLOW: malloc() error in %s line %d: %s", __FILE__, __LINE__, strerror (errno));
 		return NULL;
@@ -481,7 +479,9 @@ uint64_t _bytes, _packets, _t;	// tmp buffers
 	_t							  = 1000LL * now.tv_sec + common_record->msec_first;	// tmp buff for first_seen
 
 	common_record->fwd_status	  = 0;
-	common_record->reserved	  	  = 0;
+	common_record->biFlowDir	  = 0;
+	common_record->flowEndReason  = 0;
+	common_record->nfversion	  = 0x80 | sample->datagramVersion;
 	common_record->tcp_flags	  = sample->dcd_tcpFlags;
 	common_record->prot			  = sample->dcd_ipProtocol;
 	common_record->tos			  = sample->dcd_ipTos;
@@ -560,6 +560,16 @@ uint64_t _bytes, _packets, _t;	// tmp buffers
 				tpl_ext_20_t *tpl = (tpl_ext_20_t *)next_data;
 				tpl->in_src_mac  = Get_val48((void *)&sample->eth_src);
 				tpl->out_dst_mac = Get_val48((void *)&sample->eth_dst);
+				next_data = (void *)tpl->data;
+			} break;
+			case EX_MPLS: {
+				tpl_ext_22_t *tpl = (tpl_ext_22_t *)next_data;
+				for (int i=0; i<10; i++) {
+					if (i<sample->mpls_num_labels)
+						tpl->mpls_label[i] = sample->mpls_label[i];
+					else
+						tpl->mpls_label[i] = 0;
+				}
 				next_data = (void *)tpl->data;
 			} break;
 			case EX_NEXT_HOP_v4:	 {	// next hop IPv4 router address
@@ -671,7 +681,7 @@ uint64_t _bytes, _packets, _t;	// tmp buffers
 		master_record_t master_record;
 		char	*string;
 		ExpandRecord_v2((common_record_t *)common_record, &exporter->sflow_extension_info[ip_flags], &(exporter->info), &master_record);
-	 	format_file_block_record(&master_record, &string, 0);
+	 	flow_record_to_raw(&master_record, &string, 0);
 		printf("%s\n", string);
 	}
 

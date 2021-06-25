@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -65,19 +63,18 @@
 
 #define ALIGN_BYTES (offsetof (struct { char x; uint64_t y; }, y) - 1)
 
-#include "rbtree.h"
-#include "nfdump.h"
-#include "nftree.h"
-#include "nffile.h"
-#include "nf_common.h"
-#include "nfx.h"
 #include "util.h"
+#include "nfdump.h"
+#include "nffile.h"
+#include "nftree.h"
+#include "filter.h"
+#include "nfx.h"
 
 /* Global Variables */
 extern char 	*CurrentIdent;
 extern extension_descriptor_t extension_descriptor[];
 
-FilterEngine_data_t	*Engine;
+FilterEngine_t *Engine;
 
 /* exported fuctions */
 int check_filter_block(char *filter, master_record_t *flow_record, int expect);
@@ -101,7 +98,7 @@ uint64_t	*block = (uint64_t *)flow_record;
 		printf("Success: Startnode: %i Numblocks: %i Extended: %i Filter: '%s'\n", Engine->StartNode, nblocks(), Engine->Extended, filter);
 	} else {
 		printf("**** FAILED **** Startnode: %i Numblocks: %i Extended: %i Filter: '%s'\n", Engine->StartNode, nblocks(), Engine->Extended, filter);
-		DumpList(Engine);
+		DumpEngine(Engine);
 		printf("Expected: %i, Found: %i\n", expect, ret);
 		printf("Record:\n");
 		for(i=0; i <= (Offset_MR_LAST >> 3); i++) {
@@ -211,7 +208,7 @@ int main(int argc, char **argv) {
 master_record_t flow_record;
 common_record_t c_record;
 uint64_t *blocks, l;
-uint32_t size, in[2];
+uint32_t in[2];
 time_t	now;
 int ret, i;
 value64_t	v;
@@ -262,7 +259,6 @@ void *p;
 	}
 
 
-	size = COMMON_RECORD_DATA_SIZE;
 	memset((void *)&flow_record, 0, sizeof(master_record_t));
 	blocks = (uint64_t *)&flow_record;
 
@@ -302,13 +298,20 @@ void *p;
 	flow_record.flags	 = 2;
 	ret = check_filter_block("ipv4", &flow_record, 1);
 	ret = check_filter_block("ipv6", &flow_record, 0);
-	flow_record.flags	 = 1;
+	flow_record.flags	 = 0xFF;
 	ret = check_filter_block("ipv4", &flow_record, 0);
 	ret = check_filter_block("ipv6", &flow_record, 1);
 	flow_record.flags	 = 7;
 	ret = check_filter_block("ipv4", &flow_record, 0);
 	ret = check_filter_block("ipv6", &flow_record, 1);
 
+	flow_record.nfversion = 5;
+	ret = check_filter_block("nfversion 5", &flow_record, 1);
+	ret = check_filter_block("nfversion 9", &flow_record, 0);
+	flow_record.nfversion = 9;
+	ret = check_filter_block("nfversion > 5", &flow_record, 1);
+	ret = check_filter_block("nfversion 9", &flow_record, 1);
+	ret = check_filter_block("nfversion 10", &flow_record, 0);
 
 	flow_record.prot = IPPROTO_TCP;
 	ret = check_filter_block("any", &flow_record, 1);
@@ -658,6 +661,7 @@ void *p;
 	ret = check_filter_block("engine-id 6", &flow_record, 1);
 	ret = check_filter_block("engine-id 7", &flow_record, 0);
 	
+	flow_record.prot = IPPROTO_TCP;
 	flow_record.tcp_flags = 1;
 	ret = check_filter_block("flags F", &flow_record, 1);
 	ret = check_filter_block("flags S", &flow_record, 0);
@@ -915,6 +919,7 @@ void *p;
 	ret = check_filter_block("fwdstat noroute", &flow_record, 0); 
 
 	flow_record.dir = 1;
+	ret = check_filter_block("dir 1", &flow_record, 1); 
 	ret = check_filter_block("flowdir 1", &flow_record, 1); 
 	ret = check_filter_block("flowdir 0", &flow_record, 0); 
 	ret = check_filter_block("flowdir egress", &flow_record, 1); 
@@ -1176,7 +1181,7 @@ void *p;
 	flow_record.dstport = 1111;
 	ret = check_filter_block("dst port in pblock", &flow_record, 1);
 	ret = check_filter_block("port in pblock", &flow_record, 1);
-exit(0);
+
 
 	flow_record.dstport = 2222;
 	ret = check_filter_block("dst port in pblock", &flow_record, 1);
@@ -1187,7 +1192,7 @@ exit(0);
 	ret = check_filter_block("port in pblock", &flow_record, 0);
 
 	flow_record.srcport = 1234;
-	flow_record.srcport = 2134;
+	flow_record.dstport = 2134;
 	ret = check_filter_block("src port in pblock", &flow_record, 1);
 	ret = check_filter_block("dst port in pblock", &flow_record, 1);
 	ret = check_filter_block("port in pblock", &flow_record, 1);
@@ -1221,6 +1226,12 @@ exit(0);
 	ret = check_filter_block("nip 10.10.10.11", &flow_record, 1);
 	ret = check_filter_block("nip 172.32.7.15", &flow_record, 0);
 	ret = check_filter_block("nip 10.10.10.12", &flow_record, 0);
+	ret = check_filter_block("src nip in [ 172.32.7.16] ", &flow_record, 1);
+	ret = check_filter_block("src nip in [ 172.32.7.15] ", &flow_record, 0);
+	ret = check_filter_block("dst nip in [ 10.10.10.11] ", &flow_record, 1);
+	ret = check_filter_block("dst nip in [ 10.10.10.12] ", &flow_record, 0);
+	ret = check_filter_block("nip in [ 10.10.10.11] ", &flow_record, 1);
+	ret = check_filter_block("nip in [ 172.32.7.16] ", &flow_record, 1);
 
 	inet_pton(PF_INET6, "fe80::2110:abcd:1235:ffff", flow_record.xlate_src_ip.V6);
 	flow_record.xlate_src_ip.V6[0] = ntohll(flow_record.xlate_src_ip.V6[0]);

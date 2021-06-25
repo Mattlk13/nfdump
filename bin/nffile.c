@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2011, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -54,21 +52,19 @@
 #include <stdint.h>
 #endif
 
+#include "util.h"
+#include "nfdump.h"
 #include "minilzo.h"
 #include "lz4.h"
-#include "nf_common.h"
-#include "nffile.h"
 #include "flist.h"
-#include "util.h"
+#include "nffile.h"
+#include "nffileV2.h"
 
 /* global vars */
 
 // required for idet filter in nftree.c
 char 	*CurrentIdent;
 
-
-#define READ_FILE	1
-#define WRITE_FILE	1
 
 // LZO params
 #define HEAP_ALLOC(var,size) \
@@ -217,9 +213,14 @@ int r;
 
 	in  = (unsigned char __LZO_MMODEL *)(nffile->buff_pool[0] + sizeof(data_block_header_t));	
 	out = (unsigned char __LZO_MMODEL *)(nffile->buff_pool[1] + sizeof(data_block_header_t));	
-	in_len = nffile->block_header->size;
+	in_len  = nffile->block_header->size;
+	out_len = nffile->buff_size;
 
-	r = lzo1x_decompress(in,in_len,out,&out_len,NULL);
+	if ( in_len == 0 ) {
+		LogError("Uncompress_Block_LZO() header length error in %s line %d\n", __FILE__, __LINE__);
+   		return -1;
+	}
+	r = lzo1x_decompress_safe(in,in_len,out,&out_len,NULL);
 	if (r != LZO_E_OK ) {
   		/* this should NEVER happen */
 		LogError("Uncompress_Block_LZO() error decompression failed in %s line %d: LZO error: %d\n", __FILE__, __LINE__, r);
@@ -625,19 +626,6 @@ int i;
 		return NULL;
 	}
 
-/*
-	XXX catalogs not yet implemented
-	nffile->catalog = calloc(1, sizeof(catalog_t));
-	if ( !nffile->catalog ) {
-		LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
-		return NULL;
-	}
-	nffile->catalog->NumRecords = 0;
-	nffile->catalog->size 		= sizeof(catalog_t) - sizeof(data_block_header_t);
-	nffile->catalog->id 		= CATALOG_BLOCK;
-	nffile->catalog->pad 		= 0;
-	nffile->catalog->reserved 	= 0;
-*/
 	// init data buffer
 	nffile->buff_size = 2 * BUFFSIZE;
 	for (i=0; i<NUM_BUFFS; i++ ) {
@@ -734,14 +722,6 @@ int 			fd, flags;
 
 	nffile->file_header->flags 	   = flags;
 
-/*
-	XXX catalogs not yet implemented
-	if ( nffile->catalog && nffile->catalog->NumRecords ) {
-		memset((void *)nffile->catalog->entries, 0, nffile->catalog->NumRecords * sizeof(struct catalog_entry_s));
-		nffile->catalog->NumRecords = 0;
-		nffile->catalog->size		= 0;
-	} 
-*/
 	if ( nffile->stat_record ) {
 		memset((void *)nffile->stat_record, 0, sizeof(stat_record_t));
 		nffile->stat_record->first_seen = 0x7fffffff;
@@ -749,7 +729,7 @@ int 			fd, flags;
 	}
 
 	if ( ident ) {
-		strncpy(nffile->file_header->ident, ident, IDENTLEN);
+		strncpy(nffile->file_header->ident, ident, IDENTLEN-1);
 		nffile->file_header->ident[IDENTLEN - 1] = 0;
 	} 
 
@@ -770,15 +750,6 @@ int 			fd, flags;
 		nffile->fd = 0;
 		return NULL;
 	}
-
-/* skip writing catalog in this test version
-	XXX catalogs not yet implemented
-	if ( WriteExtraBlock(nffile, (data_block_header_t *)nffile->catalog) < 0 ) {
-		LogError("write() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
-		close(nffile->fd);
-		return NULL;
-	}
-*/
 
 	return nffile;
 
@@ -1026,11 +997,12 @@ int CloseUpdateFile(nffile_t *nffile, char *ident) {
 	}
 
 	if ( ident ) {
-		strncpy(nffile->file_header->ident, ident, IDENTLEN);
+		strncpy(nffile->file_header->ident, ident, IDENTLEN-1);
 	} else {
 		if ( strlen(nffile->file_header->ident) == 0 ) 
-		strncpy(nffile->file_header->ident, IDENTNONE, IDENTLEN);
+		strncpy(nffile->file_header->ident, IDENTNONE, IDENTLEN-1);
 	}
+	nffile->file_header->ident[IDENTLEN-1] = 0;
 
 	if ( write(nffile->fd, (void *)nffile->file_header, sizeof(file_header_t)) <= 0 ) {
 		LogError("write() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
@@ -1072,11 +1044,14 @@ uint32_t compression;
 	read_bytes = ret;
 
 	// Check for sane buffer size
-	if ( nffile->block_header->size > BUFFSIZE ) {
+	if ( nffile->block_header->size > BUFFSIZE ||
+	     nffile->block_header->size == 0 || nffile->block_header->NumRecords == 0) {
 		// this is most likely a corrupt file
-		LogError("Corrupt data file: Requested buffer size %u exceeds max. buffer size.\n", nffile->block_header->size);
+		LogError("Corrupt data file: Requested buffer size %u exceeds max. buffer size", nffile->block_header->size);
 		return NF_CORRUPT;
 	}
+
+	// check block compression - defaults to file compression setting
 
 	compression = FILE_COMPRESSION(nffile);
 	ret = read(nffile->fd, nffile->buff_ptr, nffile->block_header->size);
@@ -1200,65 +1175,6 @@ int ret, compression;
 
 } // End of WriteBlock
 
-inline void ExpandRecord_v1(common_record_t *input_record, master_record_t *output_record ) {
-uint32_t	*u;
-size_t		size;
-void		*p = (void *)input_record;
-
-	// Copy common data block
-	size = sizeof(common_record_t) - sizeof(uint8_t[4]);
-	memcpy((void *)output_record, p, size);
-	p = (void *)input_record->data;
-
-	if ( (input_record->flags & FLAG_IPV6_ADDR) != 0 )	{ // IPv6
-		// IPv6
-		// keep compiler happy
-		// memcpy((void *)output_record->V6.srcaddr, p, 4 * sizeof(uint64_t));	
-		memcpy((void *)output_record->ip_union._ip_64.addr, p, 4 * sizeof(uint64_t));	
-		p = (void *)((pointer_addr_t)p + 4 * sizeof(uint64_t));
-	} else { 	
-		// IPv4
-		u = (uint32_t *)p;
-		output_record->V6.srcaddr[0] = 0;
-		output_record->V6.srcaddr[1] = 0;
-		output_record->V4.srcaddr 	 = u[0];
-
-		output_record->V6.dstaddr[0] = 0;
-		output_record->V6.dstaddr[1] = 0;
-		output_record->V4.dstaddr 	 = u[1];
-		p = (void *)((pointer_addr_t)p + 2 * sizeof(uint32_t));
-	}
-
-	// packet counter
-	if ( (input_record->flags & FLAG_PKG_64 ) != 0 ) { 
-		// 64bit packet counter
-		value64_t	l, *v = (value64_t *)p;
-		l.val.val32[0] = v->val.val32[0];
-		l.val.val32[1] = v->val.val32[1];
-		output_record->dPkts = l.val.val64;
-		p = (void *)((pointer_addr_t)p + sizeof(uint64_t));
-	} else {	
-		// 32bit packet counter
-		output_record->dPkts = *((uint32_t *)p);
-		p = (void *)((pointer_addr_t)p + sizeof(uint32_t));
-	}
-
-	// byte counter
-	if ( (input_record->flags & FLAG_BYTES_64 ) != 0 ) { 
-		// 64bit byte counter
-		value64_t	l, *v = (value64_t *)p;
-		l.val.val32[0] = v->val.val32[0];
-		l.val.val32[1] = v->val.val32[1];
-		output_record->dOctets = l.val.val64;
-		p = (void *)((pointer_addr_t)p + sizeof(uint64_t));
-	} else {	
-		// 32bit bytes counter
-		output_record->dOctets = *((uint32_t *)p);
-		p = (void *)((pointer_addr_t)p + sizeof(uint32_t));
-	}
-
-} // End of ExpandRecord_v1
-
 void ModifyCompressFile(char * rfile, char *Rfile, int compress) {
 int 			i, anonymized, compression;
 ssize_t			ret;
@@ -1316,7 +1232,7 @@ char 			*filename, outfile[MAXPATHLEN];
 				CloseFile(nffile_w);
 				DisposeFile(nffile_w);
 				unlink(outfile);
-				break;;
+				return;
 			}
 
 			// swap buffers
@@ -1334,7 +1250,7 @@ char 			*filename, outfile[MAXPATHLEN];
 				CloseFile(nffile_w);
 				DisposeFile(nffile_w);
 				unlink(outfile);
-				break;;
+				return;
 			}
 		}
 
@@ -1355,7 +1271,7 @@ char 			*filename, outfile[MAXPATHLEN];
 void QueryFile(char *filename) {
 int i;
 nffile_t	*nffile;
-uint32_t num_records, type1, type2, type3;
+uint32_t num_records, type1, type2;
 struct stat stat_buf;
 ssize_t	ret;
 off_t	fsize;
@@ -1375,7 +1291,6 @@ off_t	fsize;
 	fsize = lseek(nffile->fd, 0, SEEK_CUR);
 	type1 = 0;
 	type2 = 0;
-	type3 = 0;
 	printf("File    : %s\n", filename);
 	printf ("Version : %u - %s\n", nffile->file_header->version,
 		FILE_IS_LZO_COMPRESSED (nffile) ? "lzo compressed" :
@@ -1415,9 +1330,6 @@ off_t	fsize;
 			case DATA_BLOCK_TYPE_2:
 				type2++;
 				break;
-			case Large_BLOCK_Type:
-				type3++;
-				break;
 			default:
 				printf("block %i has unknown type %u\n", i, nffile->block_header->id);
 		}
@@ -1445,7 +1357,6 @@ off_t	fsize;
 
 	printf(" Type 1 : %u\n", type1);
 	printf(" Type 2 : %u\n", type2);
-	printf(" Type 3 : %u\n", type3);
 	printf("Records : %u\n", num_records);
 
 	CloseFile(nffile);
@@ -1494,137 +1405,3 @@ int fd, ret;
 	return stat_record;
 
 } // End of GetStatRecord
-
-
-
-#ifdef COMPAT15
-/*
- * v1 -> v2 record conversion:
- * A netflow record in v1 block format has the same size as in v2 block format.
- * Therefore, the conversion rearranges the v1 layout into v2 layout
- *
- * old record size = new record size = 36bytes + x, where x is the sum of
- * IP address block (IPv4 or IPv6) + packet counter + byte counter ( 4/8 bytes) 
- *
- * v1											v2
- * 
- *  0 uint32_t    flags;						uint16_t	type; 	
- *												uint16_t	size;
- *
- *  1 uint16_t    size;							uint8_t		flags;		
- * 												uint8_t 	exporter_sysid;
- *    uint16_t    exporter_ref; => 0			uint16_t	ext_map;
- *
- *  2 uint16_t    msec_first;					uint16_t	msec_first;
- *    uint16_t    msec_last;					uint16_t	msec_last;
- *
- *  3 uint32_t    first;						uint32_t	first;
- *  4 uint32_t    last;							uint32_t	last;
- *
- *  5 uint8_t     dir;							uint8_t		fwd_status;
- *    uint8_t     tcp_flags;					uint8_t		tcp_flags;
- *    uint8_t     prot;							uint8_t		prot;
- *    uint8_t     tos;							uint8_t		tos;
- *
- *  6 uint16_t    input;						uint16_t	srcport;
- *    uint16_t    output;						uint16_t	dstport;
- *
- *  7 uint16_t    srcport;						x bytes IP/pkts/bytes
- *    uint16_t    dstport;
- *
- *  8 uint16_t    srcas;
- *    uint16_t    dstas;
- *												uint16_t    input;
- *												uint16_t    output;
- *
- *												uint16_t    srcas;
- *	9 x bytes IP/pkts/byte						uint16_t    dstas;
- *
- *
- */
-
-void Convert_v1_to_v2(void *mem) {
-common_record_t    *v2 = (common_record_t *)mem;
-common_record_v1_t *v1 = (common_record_v1_t *)mem;
-uint32_t *index 	   = (uint32_t *)mem;
-uint16_t tmp1, tmp2, srcas, dstas, *tmp3;
-size_t cplen;
-
-	// index 0
-	tmp1 	 = v1->flags;
-	v2->type = CommonRecordType;
-	v2->size = v1->size;
-
-	// index 1
-	v2->flags 		   = tmp1;
-	v2->exporter_sysid = 0;
-	v2->ext_map 	   = 0;
-
-	// index 2, 3, 4 already in sync
-
-	// index 5
-	v2->fwd_status = 0;
-
-	// index 6
-	tmp1 = v1->input;
-	tmp2 = v1->output;
-	v2->srcport = v1->srcport;
-	v2->dstport = v1->dstport;
-
-	// save AS numbers
-	srcas = v1->srcas;
-	dstas = v1->dstas;
-
-	cplen = 0;
-	switch (v2->flags) {
-		case 0:
-			// IPv4 8 byte + 2 x 4 byte counter
-			cplen = 16;
-			break;
-		case 1:
-			// IPv6 32 byte + 2 x 4 byte counter
-			cplen = 40;
-			break;
-		case 2:
-			// IPv4 8 byte + 1 x 4 + 1 x 8 byte counter
-			cplen = 20;
-			break;
-		case 3:
-			// IPv6 32 byte + 1 x 4 + 1 x 8 byte counter
-			cplen = 44;
-			break;
-		case 4:
-			// IPv4 8 byte + 1 x 8 + 1 x 4 byte counter
-			cplen = 20;
-			break;
-		case 5:
-			// IPv6 32 byte + 1 x 8 + 1 x 4 byte counter
-			cplen = 44;
-			break;
-		case 6:
-			// IPv4 8 byte + 2 x 8 byte counter
-			cplen = 24;
-			break;
-		case 7:
-			// IPv6 32 byte + 2 x 8 byte counter
-			cplen = 48;
-			break;
-		default:
-			// this should never happen - catch it anyway
-			cplen = 0;
-	}
-	// copy IP/pkts/bytes block
-	memcpy((void *)&index[7], (void *)&index[9], cplen );
-
-	// hook 16 bit array at the end of copied block
-	tmp3 = (uint16_t *)&index[7+(cplen>>2)];
-	// 2 byte I/O interfaces 
-	tmp3[0] = tmp1;
-	tmp3[1] = tmp2;
-	// AS numbers
-	tmp3[2] = srcas;
-	tmp3[3] = dstas;
-
-} // End of Convert_v1_to_v2
-#endif
-

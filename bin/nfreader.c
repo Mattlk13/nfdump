@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -45,8 +43,7 @@
  * This compiles this code and links the required nfdump files
  * If you do it by hand:
  *
- * gcc -c nfreader.c
- * gcc -o nfreader nfreader.o nffile.o flist.o util.o  
+ * gcc -I.. -o nfreader nfreader.c -lnfdump
  *
  */
  
@@ -71,24 +68,19 @@
 #include <stdint.h>
 #endif
 
+#include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "nfx.h"
 #include "bookkeeper.h"
 #include "collector.h"
 #include "exporter.h"
-#include "util.h"
 #include "flist.h"
-
-#if ( SIZEOF_VOID_P == 8 )
-typedef uint64_t    pointer_addr_t;
-#else
-typedef uint32_t    pointer_addr_t;
-#endif
 
 // module limited globals
 extension_map_list_t *extension_map_list;
 
-extern generic_exporter_t **exporter_list;
+extern exporter_t **exporter_list;
 
 /* Function Prototypes */
 static void usage(char *name);
@@ -168,9 +160,6 @@ master_record_t	master_record;
 common_record_t *flow_record;
 nffile_t		*nffile;
 int 		i, done, ret;
-#ifdef COMPAT15
-int	v1_map_done = 0;
-#endif
 
 	// Get the first file handle
 	nffile = GetNextFile(NULL, 0, 0);
@@ -211,64 +200,25 @@ int	v1_map_done = 0;
 				} break; // not really needed
 		}
 
-#ifdef COMPAT15
-		if ( nffile->block_header->id == DATA_BLOCK_TYPE_1 ) {
-			common_record_v1_t *v1_record = (common_record_v1_t *)nffile->buff_ptr;
-			// create an extension map for v1 blocks
-			if ( v1_map_done == 0 ) {
-				extension_map_t *map = malloc(sizeof(extension_map_t) + 2 * sizeof(uint16_t) );
-				if ( ! map ) {
-					LogError("malloc() allocation error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
-					exit(255);
-				}
-				map->type 	= ExtensionMapType;
-				map->size 	= sizeof(extension_map_t) + 2 * sizeof(uint16_t);
-				if (( map->size & 0x3 ) != 0 ) {
-					map->size += 4 - ( map->size & 0x3 );
-				}
-
-				map->map_id = INIT_ID;
-
-				map->ex_id[0]  = EX_IO_SNMP_2;
-				map->ex_id[1]  = EX_AS_2;
-				map->ex_id[2]  = 0;
-
-				map->extension_size  = 0;
-
-				Insert_Extension_Map(extension_map_list, map);
-
-				v1_map_done = 1;
-			}
-
-			// convert the records to v2
-			for ( i=0; i < nffile->block_header->NumRecords; i++ ) {
-				common_record_t *v2_record = (common_record_t *)v1_record;
-				Convert_v1_to_v2((void *)v1_record);
-				// now we have a v2 record -> use size of v2_record->size
-				v1_record = (common_record_v1_t *)((pointer_addr_t)v1_record + v2_record->size);
-			}
-			nffile->block_header->id = DATA_BLOCK_TYPE_2;
-		}
-#endif
-
-		if ( nffile->block_header->id == Large_BLOCK_Type ) {
-			// skip
-			continue;
-		}
-
 		if ( nffile->block_header->id != DATA_BLOCK_TYPE_2 ) {
 			fprintf(stderr, "Can't process block type %u. Skip block.\n", nffile->block_header->id);
 			continue;
 		}
 
 		flow_record = nffile->buff_ptr;
+		uint32_t sumSize = 0;
 		for ( i=0; i < nffile->block_header->NumRecords; i++ ) {
 			char        string[1024];
+			if ( (sumSize + flow_record->size) > ret || (flow_record->size < sizeof(record_header_t)) ) {
+				LogError("Corrupt data file. Inconsistent block size in %s line %d\n", __FILE__, __LINE__);
+				exit(255);
+			}
+			sumSize += flow_record->size;
 
 			switch ( flow_record->type ) {
 				case CommonRecordType: {
 					uint32_t map_id = flow_record->ext_map;
-					generic_exporter_t *exp_info = exporter_list[flow_record->exporter_sysid];
+					exporter_t *exp_info = exporter_list[flow_record->exporter_sysid];
 					if ( extension_map_list->slot[map_id] == NULL ) {
 						snprintf(string, 1024, "Corrupt data file! No such extension map id: %u. Skip record", flow_record->ext_map );
 						string[1023] = '\0';
@@ -293,9 +243,18 @@ int	v1_map_done = 0;
 				case ExtensionMapType: {
 					extension_map_t *map = (extension_map_t *)flow_record;
 
-					if ( Insert_Extension_Map(extension_map_list, map) ) {
-					 	// flush new map
-					} // else map already known and flushed
+					int ret = Insert_Extension_Map(extension_map_list, map);
+					switch (ret) {
+						case 0:
+							// map already known and flushed
+							break; 
+						case 1:
+							// new map
+							break;
+						default:
+							LogError("Corrupt data file. Unable to decode at %s line %d\n", __FILE__, __LINE__);
+							exit(255);
+					}
 
 					} break;
 				case ExporterInfoRecordType:
@@ -336,7 +295,7 @@ int			c;
 				break;
 				break;
 			case 'L':
-				if ( !InitLog("argv[0]", optarg) )
+				if ( !InitLog(0, "argv[0]", optarg, 0) )
 					exit(255);
 				break;
 			case 'r':

@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -31,93 +29,34 @@
  *  
  */
 
-#ifndef _NF_COMMON_H
-#define _NF_COMMON_H 1
+#ifndef _OUTPUT_FMT_H
+#define _OUTPUT_FMT_H 1
 
 #include "config.h"
 
 #include <sys/types.h>
+#include <time.h>
+
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
 #endif
-#include <time.h>
 
-typedef void (*printer_t)(void *, char **, int);
-
-#if ( SIZEOF_VOID_P == 8 )
-typedef uint64_t	pointer_addr_t;
-#else
-typedef uint32_t	pointer_addr_t;
-#endif
-
-typedef struct msec_time_s {
-	time_t		sec;
-	uint16_t	msec;
-} msec_time_tt;
-
-/* common minimum netflow header for all versions */
-typedef struct common_flow_header {
-  uint16_t  version;
-  uint16_t  count;
-} common_flow_header_t;
-
-typedef struct printmap_s {
-	char		*printmode;		// name of the output format
-	printer_t	func;			// name of the function, which prints the record
-	char		*Format;		// output format definition
-} printmap_t;
-
-#define NSEL_EVENT_IGNORE 0LL
-#define NSEL_EVENT_CREATE 1LL
-#define NSEL_EVENT_DELETE 2LL
-#define NSEL_EVENT_DENIED 3LL
-#define NSEL_EVENT_ALERT  4LL
-#define NSEL_EVENT_UPDATE 5LL
-
-#define NEL_EVENT_INVALID 0LL
-#define NEL_EVENT_ADD	  1LL
-#define NEL_EVENT_DELETE  2LL
 
 /* prototypes */
-
-int InitSymbols(void);
 
 void Setv6Mode(int mode);
 
 int Getv6Mode(void);
 
-int Proto_num(char *protostr);
+void text_prolog(void);
 
-void format_file_block_header(void *header, char **s, int tag);
+void text_epilog(void);
 
-char *format_csv_header(void);
-
-char *get_record_header(void);
-
-void set_record_header(void);
-
-void format_file_block_record(void *record, char **s, int tag);
-
-void flow_record_to_pipe(void *record, char ** s, int tag);
-
-void flow_record_to_csv(void *record, char ** s, int tag);
-
-void flow_record_to_null(void *record, char ** s, int tag);
-
-int ParseOutputFormat(char *format, int plain_numbers, printmap_t *printmap);
+int ParseOutputFormat(char *format, int printPlain, printmap_t *printmap);
 
 void format_special(void *record, char ** s, int tag);
 
-
-uint32_t Get_fwd_status_id(char *status);
-
-char *Get_fwd_status_name(uint32_t id);
-
-void Proto_string(uint8_t protonum, char *protostr);
-
-void condense_v6(char *s);
-
 #define TAG_CHAR ''
 
-#endif //_NF_COMMON_H
+#endif //_OUTPUT_FMT_H
 

@@ -1,11 +1,14 @@
 # nfdump
 
-Stable Release v1.6.17
+Stable Release v1.6.23
 
-See the Changelog file for all changes in release 1.6.17
+See the Changelog file for all changes in release 1.6.23
 
-nfdump is a toolset in oder to collect and process netflow and sflow data, sent from netflow/sflow compatible devices. 
+nfdump is a toolset in order to collect and process netflow and sflow data, sent from netflow/sflow compatible devices. 
 The toolset supports netflow __v1__, __v5/v7__,__v9__,__IPFIX__ and __SFLOW__.  nfdump supports IPv4 as well as IPv6.
+
+__Note:__ nfdump 1.6.18 and newer versions __not longer__ support nfdump-1.5.x files. If you have nfdump-1.5.x please convert them
+before upgrading.
 
 nfdump is used as backend toolset for __NfSen__.
 
@@ -13,9 +16,12 @@ nfdump is used as backend toolset for __NfSen__.
 
 ## NSEL/ASA, NEL/NAT support
 
-__NSEL__ (* Network Event Security Logging *) as well as NEL (* NAT Event Logging *) are technologies invented by __CISCO__ and also use the netflow v9 protocol. However, NSEL and NEL are not flows as commonly known but rather *__Events__!* exported from specific devices such as CISCO ASA. nfdump supports Event looging as part of netflow v9.
+__NSEL__ (Network Event Security Logging) as well as NEL (NAT Event Logging) are technologies invented by __CISCO__ and also use the netflow v9 protocol. However, NSEL and NEL are not flows as commonly known but rather *__Events__!* exported from specific devices such as CISCO ASA. nfdump supports Event looging as part of netflow v9.
 
 __Note:__ The older nfdump-1.5.8-2-NSEL is __not compatible__ with nfdump > 1.6.9 which supports NSEL/NEL.
+
+__Junos NAT Event Logging__ is mostly compatible with CISCO's NAT Event Logging - mostly - it needs another data interpretation.
+See __--enable-jnat__ below
 
 ---
 
@@ -25,7 +31,7 @@ nfdump contains an IPFIX module for decoding IPFIX flow data. It
 does not support the full IPFIX definition.
 
 * Supports basically same feature set of elements as netflow_v9 module
-* Only UDP traffic is accepted no tCP/SCTP
+* Only UDP traffic is accepted no TCP/SCTP
 * If you would like to see more IPFIX support, please contact me. 
 
 ---
@@ -42,6 +48,8 @@ The following config options are available:
 
 *  __--enable-nsel__   
 Compile nfdump, to read and process NSEL/NEL event data; default is __NO__
+*  __--enable-jnat__   
+compile nfdump, to read and process JunOS NAT event logging __NO__
 * __--enable-ftconv__  
 Build the flow-tools to nfdump converter; default is __NO__
 * __--enable-sflow__  
@@ -50,8 +58,9 @@ Build sflow collector sfcpad; default is __NO__
 Build nfprofile used by NfSen; default is __NO__
 * __--enable-nftrack__  
 Build nftrack used by PortTracker; default is __NO__
-* __--enable-compat15__  
-Build nfdump, to read nfdump data files created with nfdump 1.5.x; default is __NO__
+
+This code no longer reads nfdump-1.5.x data files. If needed use nfdump up
+to v1.6.17
 
 Development and beta options
 
@@ -60,7 +69,7 @@ Insert lots of debug and development code into nfdump for testing and debugging;
 * __--enable-readpcap__  
 Add code to nfcapd to read flow data also from pcap files; default is __NO__  
 * __--enable-nfpcapd__  
-Build experimental nfpcapd collector to create netflow data from interface traffic or precollected pcap traffic, similar to softflowd; default is __NO__
+Build nfpcapd collector to create netflow data from interface traffic or precollected pcap traffic, similar to softflowd; default is __NO__
 
 
 ### The tools
@@ -91,6 +100,11 @@ Reads the netflow data from the files stored by nfcapd and sends it
 over the network to another host.
 
 #### Optional binaries:
+
+__nfpcapd__ - pcap to netflow collector daemon  
+nfpcapd listens on a network interface, or reads precollected pcap traffic 
+and stores flow records into nfcapd comaptible files. It is nfcapd's
+companion to convert traffic directly into nfdump records.
 
 __sfcapd__ - sflow collector daemon  
 scfapd collects sflow data and stores it into nfcapd comaptible files.
@@ -201,7 +215,7 @@ It is assumed, that host level security is in place to filter the
 proper IP addresses.
 
 See the manual pages or use the -h switch for details on using each of 
-the programs. For any questions send email to phaag@users.sourceforge.net
+the programs. For any questions send email to peter@people.ops-trust.net
 
 Configure your router to export netflow. See the relevant documentation
 for your model. 
@@ -369,6 +383,7 @@ Tag | ID
 ----|---
 NF_N_NAT_EVENT | 230
 NF_N_INGRESS_VRFID | 234
+NF_N_EGRESS_VRFID | 235
 NF_N_NAT_INSIDE_GLOBAL_IPV4 | 225
 NF_N_NAT_OUTSIDE_GLOBAL_IPV4 | 226
 NF_N_POST_NAPT_SRC_PORT | 	227

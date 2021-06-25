@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
+ *  Copyright (c) 2019-2020, Peter Haag
  *  All rights reserved.
  *  
  *  Redistribution and use in source and binary forms, with or without 
@@ -35,39 +35,32 @@
 
 #include <stdio.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
 #include <string.h>
-#include <ctype.h>
-#include <stdlib.h>
-#include <errno.h>
 
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
 #endif
 
-#include "nffile.h"
 #include "util.h"
-#include "nf_common.h"
+#include "nfdump.h"
+#include "nffile.h"
+#include "nfx.h"
+#include "output_util.h"
 #include "output_json.h"
 
 #define STRINGSIZE 10240
 #define IP_STRING_LEN (INET6_ADDRSTRLEN)
 
-#ifdef NSEL
-static char *NSEL_event_string[6] = {
-	"IGNORE", "CREATE", "DELETE", "DENIED", "ALERT", "UPDATE"
-};
-
-static char *NEL_event_string[3] = {
-	"INVALID", "ADD", "DELETE"
-};
-#endif
-
 static char data_string[STRINGSIZE];
+
+// record counter 
+static uint32_t recordCount;
 
 static void String_Flags(master_record_t *r, char *string) {
 
@@ -83,6 +76,17 @@ static void String_Flags(master_record_t *r, char *string) {
 
 } // End of String_Flags
 
+void json_prolog(void) {
+	recordCount = 0;
+	memset(data_string, 0, STRINGSIZE);
+	printf("[\n");
+} // End of json_prolog
+
+void json_epilog(void) {
+	printf("]\n");
+} // End of json_epilog
+
+
 void flow_record_to_json(void *record, char ** s, int tag) {
 char 		*_s, as[IP_STRING_LEN], ds[IP_STRING_LEN], *datestr1, *datestr2, datebuff[64], flags_str[16];
 int			i, id;
@@ -95,17 +99,23 @@ extension_map_t	*extension_map = r->map_ref;
 	when = r->first;
 	ts = localtime(&when);
 	strftime(datebuff, 63, "%Y-%m-%dT%H:%M:%S", ts);
-	asprintf(&datestr1, "%s.%u", datebuff, r->msec_first);
+	asprintf(&datestr1, "%s.%03u", datebuff, r->msec_first);
 
 	when = r->last;
 	ts = localtime(&when);
 	strftime(datebuff, 63, "%Y-%m-%dT%H:%M:%S", ts);
-	asprintf(&datestr2, "%s.%u", datebuff, r->msec_last);
+	asprintf(&datestr2, "%s.%03u", datebuff, r->msec_last);
 
 	String_Flags(record, flags_str);
 
-	_s = data_string;
-	slen = STRINGSIZE;
+	if ( recordCount ) {
+		strncpy(data_string, ",\n", STRINGSIZE-1);
+	}
+	recordCount++;
+
+	_slen = strlen(data_string);
+	_s = data_string + _slen;
+	slen = STRINGSIZE - _slen;
 	snprintf(_s, slen-1, "{\n"
 "	\"type\" : \"%s\",\n"
 "	\"sampled\" : %u,\n"
@@ -269,7 +279,7 @@ extension_map_t	*extension_map = r->map_ref;
 				as[IP_STRING_LEN-1] = 0;
 
 				snprintf(_s, slen-1,
-"	\"bgp4_next_hop\" : \"%s\",\n"
+"	\"bgp6_next_hop\" : \"%s\",\n"
 , as);
 			} break;
 			case EX_VLAN:
@@ -392,11 +402,7 @@ extension_map_t	*extension_map = r->map_ref;
 				} break;
 #ifdef NSEL
 			case EX_NSEL_COMMON: {
-				char *event = "UNKNOWN";
 				char *datestr, datebuff[64];
-				if ( r->event <= 5 ) {
-					event = NSEL_event_string[r->event];
-				} 
 				when = r->event_time / 1000LL;
 				ts = localtime(&when);
 				strftime(datebuff, 63, "%Y-%m-%dT%H:%M:%S", ts);
@@ -406,21 +412,20 @@ extension_map_t	*extension_map = r->map_ref;
 "	\"event_id\" : \"%u\",\n"
 "	\"event\" : \"%s\",\n"
 "	\"xevent_id\" : \"%u\",\n"
+"	\"sgt_id\" : \"%u\",\n"
 "	\"t_event\" : \"%s\",\n"
-, r->conn_id, r->event, event, r->fw_xevent, datestr);
+, r->conn_id, r->event, r->event_flag == FW_EVENT ? FwEventString(r->event) : EventString(r->event)
+, r->fw_xevent, r->sec_group_tag, datestr);
 				free(datestr);
 				} break;
 			case EX_NEL_COMMON: {
-				char *event = "UNKNOWN";
-				if ( r->event <= 2 ) {
-					event = NEL_event_string[r->event];
-				}
 				snprintf(_s, slen-1,
 "	\"nat_event_id\" : \"%u\",\n"
 "	\"nat_event\" : \"%s\",\n"
 "	\"ingress_vrf\" : \"%u\",\n"
 "	\"egress_vrf\" : \"%u\",\n"
-, r->event, event, r->ingress_vrfid, r->egress_vrfid);
+, r->event, r->event_flag == FW_EVENT ? FwEventString(r->event) : EventString(r->event)
+, r->ingress_vrfid, r->egress_vrfid);
 				} break;
 			case EX_NSEL_XLATE_PORTS: {
 				snprintf(_s, slen-1,
@@ -495,10 +500,10 @@ extension_map_t	*extension_map = r->map_ref;
 	// add label and close json object
 	snprintf(_s, slen-1, 
 "	\"label\" : \"%s\"\n"
-"}\n", r->label ? r->label : "<none>");
+"}", r->label ? r->label : "<none>");
 
 	data_string[STRINGSIZE-1] = 0;
 	*s = data_string;
 
 
-} // End of format_file_block_record
+} // End of flow_record_to_json

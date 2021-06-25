@@ -1,6 +1,5 @@
 /*
- *  Copyright (c) 2017
- *  Copyright (c) 2016
+ *  Copyright (c) 2016-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -49,13 +48,16 @@
 #include <stdint.h>
 #endif
 
-#include "nf_common.h"
+#include "util.h"
+#include "output_util.h"
 #include "rbtree.h"
+#include "filter.h"
 #include "nfdump.h"
 #include "nffile.h"
 #include "nftree.h"
 #include "ipconv.h"
-#include "util.h"
+
+#define AnyMask 0xffffffffffffffffLL
 
 /*
  * function prototypes
@@ -65,6 +67,10 @@ static void  yyerror(char *msg);
 static uint32_t ChainHosts(uint64_t *offsets, uint64_t *hostlist, int num_records, int type);
 
 static uint64_t VerifyMac(char *s);
+
+static int InitSymbols(void);
+
+static uint32_t Get_fwd_status_id(char *status);
 
 enum { DIR_UNSPEC = 1, 
 	   SOURCE, DESTINATION, SOURCE_AND_DESTINATION, SOURCE_OR_DESTINATION, 
@@ -85,6 +91,38 @@ extern char	*FilterFilename;
 
 static uint32_t num_ip;
 
+static struct fwd_status_def_s {
+	uint32_t	id;
+	char		*name;
+} fwd_status_def_list[] = {
+	{ 0,	"Ukwn"}, 	// Unknown
+	{ 1,	"Forw"}, 	// Normal forwarding
+	{ 2,	"Frag"}, 	// Fragmented
+	{ 16,	"Drop"}, 	// Drop
+	{ 17,	"DaclD"},	// Drop ACL deny
+	{ 18,	"Daclp"},	// Drop ACL drop
+	{ 19,	"Noroute"},	// Unroutable
+	{ 20,	"Dadj"}, 	// Drop Adjacency
+	{ 21,	"Dfrag"}, 	// Drop Fragmentation & DF set
+	{ 22,	"Dbadh"}, 	// Drop Bad header checksum
+	{ 23,	"Dbadtlen"}, // Drop Bad total Length
+	{ 24,	"Dbadhlen"}, // Drop Bad Header Length
+	{ 25,	"DbadTTL"}, // Drop bad TTL
+	{ 26,	"Dpolicy"}, // Drop Policer
+	{ 27,	"Dwred"}, 	// Drop WRED
+	{ 28,	"Drpf"}, 	// Drop RPF
+	{ 29,	"Dforus"}, 	// Drop For us
+	{ 30,	"DbadOf"}, 	// Drop Bad output interface
+	{ 31,	"Dhw"}, 	// Drop Hardware
+	{ 128,	"Term"}, 	// Terminate
+	{ 129,	"Tadj"}, 	// Terminate Punt Adjacency
+	{ 130,	"TincAdj"}, // Terminate Incomplete Adjacency
+	{ 131,	"Tforus"}, 	// Terminate For us
+	{ 0,	NULL}		// Last entry
+};
+
+static char **fwd_status = NULL;
+
 char yyerror_buff[256];
 
 #define MPLSMAX 0x00ffffff
@@ -97,16 +135,17 @@ char yyerror_buff[256];
 	void			*list;
 }
 
-%token ANY IP IF MAC MPLS TOS DIR FLAGS PROTO MASK HOSTNAME NET PORT FWDSTAT IN OUT SRC DST EQ LT GT PREV NEXT
-%token NUMBER STRING IDENT PORTNUM ICMP_TYPE ICMP_CODE ENGINE_TYPE ENGINE_ID AS PACKETS BYTES FLOWS 
+%token ANY IP IF MAC MPLS TOS DIR FLAGS PROTO MASK NET PORT FWDSTAT IN OUT SRC DST EQ LT GT LE GE PREV NEXT
+%token IDENT ENGINE_TYPE ENGINE_ID AS PACKETS BYTES FLOWS NFVERSION
 %token PPS BPS BPP DURATION NOT 
 %token IPV4 IPV6 BGPNEXTHOP ROUTER VLAN
 %token CLIENT SERVER APP LATENCY SYSID
-%token ASA REASON DENIED XEVENT XIP XNET XPORT INGRESS EGRESS ACL ACE XACE
+%token ASA DENIED XEVENT XNET XPORT INGRESS EGRESS ACL ACE XACE
 %token NAT ADD EVENT VRF NPORT NIP
 %token PBLOCK START END STEP SIZE
-%type <value>	expr NUMBER PORTNUM ICMP_TYPE ICMP_CODE
-%type <s> STRING REASON 
+%token <s> STRING REASON
+%token <value> NUMBER PORTNUM ICMP_TYPE ICMP_CODE
+%type <value> expr
 %type <param> dqual term comp acl inout
 %type <list> iplist ullist
 
@@ -163,7 +202,7 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 
 	| PROTO STRING { 
 		int64_t	proto;
-		proto = Proto_num($2);
+		proto = ProtoNum($2);
 
 		if ( proto > 255 ) {
 			yyerror("Protocol number > 255");
@@ -268,7 +307,31 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 			yyerror("Flags must be 0..63");
 			YYABORT;
 		}
-		$$.self = NewBlock(OffsetFlags, MaskFlags, ($3 << ShiftFlags) & MaskFlags, $2.comp, FUNC_NONE, NULL); 
+		$$.self = Connect_AND(
+			// imply flags with a proto TCP block
+			NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_TCP << ShiftProto) & MaskProto, CMP_EQ, FUNC_NONE, NULL),
+			NewBlock(OffsetFlags, MaskFlags, ($3 << ShiftFlags) & MaskFlags, $2.comp, FUNC_NONE, NULL)
+		);
+	}
+
+	| NFVERSION comp NUMBER	{	
+		if ( $3 > 10 ) {
+			yyerror("Netflow version must be <= 10");
+			YYABORT;
+		}
+		$$.self = NewBlock(OffsetRecordVersion, MaskRecordVersion, ($3 << ShiftRecordVersion) & MaskRecordVersion, $2.comp, FUNC_NONE, NULL); 
+	}
+
+	// handle special case with 'AS' takes as flags. and not AS number
+	| FLAGS AS	{	
+		uint64_t fl = 0;
+		fl |= 16;
+		fl |= 2;
+		$$.self = Connect_AND(
+			// imply flags with a proto TCP block
+			NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_TCP << ShiftProto) & MaskProto, CMP_EQ, FUNC_NONE, NULL),
+			NewBlock(OffsetFlags, (fl << ShiftFlags) & MaskFlags, (fl << ShiftFlags) & MaskFlags, CMP_FLAGS, FUNC_NONE, NULL)
+		);
 	}
 
 	| FLAGS STRING	{	
@@ -294,8 +357,11 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 			YYABORT;
 		}
 
-		$$.self = NewBlock(OffsetFlags, (fl << ShiftFlags) & MaskFlags, 
-					(fl << ShiftFlags) & MaskFlags, CMP_FLAGS, FUNC_NONE, NULL); 
+		$$.self = Connect_AND(
+			// imply flags with a proto TCP block
+			NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_TCP << ShiftProto) & MaskProto, CMP_EQ, FUNC_NONE, NULL),
+			NewBlock(OffsetFlags, (fl << ShiftFlags) & MaskFlags, (fl << ShiftFlags) & MaskFlags, CMP_FLAGS, FUNC_NONE, NULL)
+		);
 	}
 
 	| dqual IP STRING { 	
@@ -605,32 +671,32 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 
 	| ICMP_TYPE NUMBER {
 		if ( $2 > 255 ) {
-			yyerror("ICMP tpye of range 0..15");
+			yyerror("ICMP type of range 0..255");
 			YYABORT;
 		}
 		$$.self = Connect_AND(
-			// imply proto ICMP with a proto ICMP block
+			// imply ICMP-TYPE with a proto ICMP block
 			Connect_OR (
 				NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_ICMP << ShiftProto)  & MaskProto, CMP_EQ, FUNC_NONE, NULL), 
 				NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_ICMPV6 << ShiftProto)  & MaskProto, CMP_EQ, FUNC_NONE, NULL)
 			),
-			NewBlock(OffsetPort, MaskICMPtype, ($2 << ShiftICMPtype) & MaskICMPtype, CMP_EQ, FUNC_NONE, NULL )
+			NewBlock(OffsetICMP, MaskICMPtype, ($2 << ShiftICMPtype) & MaskICMPtype, CMP_EQ, FUNC_NONE, NULL )
 		);
 
 	}
 
 	| ICMP_CODE NUMBER {
 		if ( $2 > 255 ) {
-			yyerror("ICMP code of range 0..15");
+			yyerror("ICMP code of range 0..255");
 			YYABORT;
 		}
 		$$.self = Connect_AND(
-			// imply proto ICMP with a proto ICMP block
+			// imply ICMP-CODE with a proto ICMP block
 			Connect_OR (
 				NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_ICMP << ShiftProto)  & MaskProto, CMP_EQ, FUNC_NONE, NULL), 
 				NewBlock(OffsetProto, MaskProto, ((uint64_t)IPPROTO_ICMPV6 << ShiftProto)  & MaskProto, CMP_EQ, FUNC_NONE, NULL)
 			),
-			NewBlock(OffsetPort, MaskICMPcode, ($2 << ShiftICMPcode) & MaskICMPcode, CMP_EQ, FUNC_NONE, NULL )
+			NewBlock(OffsetICMP, MaskICMPcode, ($2 << ShiftICMPcode) & MaskICMPcode, CMP_EQ, FUNC_NONE, NULL )
 		);
 
 	}
@@ -747,56 +813,6 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 #endif
 	}
 
-	| dqual XIP STRING { 	
-#ifdef NSEL
-		int af, bytes, ret;
-
-		ret = parse_ip(&af, $3, IPstack, &bytes, ALLOW_LOOKUP, &num_ip);
-
-		if ( ret == 0 ) {
-			yyerror("Error parsing IP address.");
-			YYABORT;
-		}
-
-		// ret == -1 will never happen here, as ALLOW_LOOKUP is set
-		if ( ret == -2 ) {
-			// could not resolv host => 'not any'
-			$$.self = Invert(NewBlock(OffsetProto, 0, 0, CMP_EQ, FUNC_NONE, NULL )); 
-		} else {
-			uint64_t offsets[4] = {OffsetXLATESRCv6a, OffsetXLATESRCv6b, OffsetXLATEDSTv6a, OffsetXLATEDSTv6b };
-			if ( af && (( af == PF_INET && bytes != 4 ) || ( af == PF_INET6 && bytes != 16 ))) {
-				yyerror("incomplete IP address");
-				YYABORT;
-			}
-
-			switch ( $1.direction ) {
-				case SOURCE:
-				case DESTINATION:
-					$$.self = ChainHosts(offsets, IPstack, num_ip, $1.direction);
-					break;
-				case DIR_UNSPEC:
-				case SOURCE_OR_DESTINATION: {
-					uint32_t src = ChainHosts(offsets, IPstack, num_ip, SOURCE);
-					uint32_t dst = ChainHosts(offsets, IPstack, num_ip, DESTINATION);
-					$$.self = Connect_OR(src, dst);
-					} break;
-				case SOURCE_AND_DESTINATION: {
-					uint32_t src = ChainHosts(offsets, IPstack, num_ip, SOURCE);
-					uint32_t dst = ChainHosts(offsets, IPstack, num_ip, DESTINATION);
-					$$.self = Connect_AND(src, dst);
-					} break;
-				default:
-					yyerror("This token is not expected here!");
-					YYABORT;
-	
-			} // End of switch
-
-		}
-#else
-		yyerror("NSEL/ASA filters not available");
-		YYABORT;
-#endif
-	}
 
 	| dqual XNET STRING '/' NUMBER { 
 #ifdef NSEL
@@ -1157,6 +1173,38 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 	
 			} // End of switch
 
+		}
+#else
+		yyerror("NSEL/ASA filters not available");
+		YYABORT;
+#endif
+	}
+
+	| dqual NIP IN '[' iplist ']' { 	
+#ifdef NSEL
+		switch ( $1.direction ) {
+			case SOURCE:
+				$$.self = NewBlock(OffsetXLATESRCv6a, MaskIPv6, 0 , CMP_IPLIST, FUNC_NONE, (void *)$5 );
+				break;
+			case DESTINATION:
+				$$.self = NewBlock(OffsetXLATEDSTv6a, MaskIPv6, 0 , CMP_IPLIST, FUNC_NONE, (void *)$5 );
+				break;
+			case DIR_UNSPEC:
+			case SOURCE_OR_DESTINATION:
+				$$.self = Connect_OR(
+					NewBlock(OffsetXLATESRCv6a, MaskIPv6, 0 , CMP_IPLIST, FUNC_NONE, (void *)$5 ),
+					NewBlock(OffsetXLATEDSTv6a, MaskIPv6, 0 , CMP_IPLIST, FUNC_NONE, (void *)$5 )
+				);
+				break;
+			case SOURCE_AND_DESTINATION:
+				$$.self = Connect_AND(
+					NewBlock(OffsetXLATESRCv6a, MaskIPv6, 0 , CMP_IPLIST, FUNC_NONE, (void *)$5 ),
+					NewBlock(OffsetXLATEDSTv6a, MaskIPv6, 0 , CMP_IPLIST, FUNC_NONE, (void *)$5 )
+				);
+				break;
+			default:
+				yyerror("This token is not expected here!");
+				YYABORT;
 		}
 #else
 		yyerror("NSEL/ASA filters not available");
@@ -2063,6 +2111,8 @@ comp:				{ $$.comp = CMP_EQ; }
 	| EQ			{ $$.comp = CMP_EQ; }
 	| LT			{ $$.comp = CMP_LT; }
 	| GT			{ $$.comp = CMP_GT; }
+	| LE			{ $$.comp = CMP_LE; }
+	| GE			{ $$.comp = CMP_GE; }
 	;
 
 /* 'direction' qualifiers */
@@ -2214,3 +2264,43 @@ int i;
 	return mac;
 
 } // End of VerifyMac
+
+static int InitSymbols(void) {
+int i;
+
+	// already initialised?
+	if ( fwd_status )
+		return 1;
+
+	// fill fwd status cache table
+	fwd_status = ( char **)calloc(256, sizeof(char *));
+	if ( !fwd_status ) {
+		fprintf(stderr, "malloc(): %s line %d: %s", __FILE__, __LINE__, strerror (errno));
+		return 0;
+	}
+	i=0;
+	while ( fwd_status_def_list[i].name ) {
+		uint32_t j = fwd_status_def_list[i].id;
+		fwd_status[j] = fwd_status_def_list[i].name;
+		i++;
+	}
+	return 1;
+
+} // End of InitSymbols
+
+static uint32_t Get_fwd_status_id(char *status) {
+int i;
+
+	if ( !fwd_status && !InitSymbols() )
+		yyerror("malloc() error");
+
+	i = 0;
+	while ( i < 256 ) {
+		if ( fwd_status[i] && strcasecmp(fwd_status[i], status) == 0 ) 
+			return i;
+		i++;
+	}
+	return 256;
+
+} // End of Get_fwd_status_id
+

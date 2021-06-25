@@ -1,8 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2016, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2012, Peter Haag
+ *  Copyright (c) 2012-2020, Peter Haag
  *  
  *  Redistribution and use in source and binary forms, with or without 
  *  modification, are permitted provided that the following conditions are met:
@@ -51,31 +48,25 @@
 #include <stdint.h>
 #endif
 
-#ifndef DEVEL
-#   define dbg_printf(...) /* printf(__VA_ARGS__) */
-#else
-#   define dbg_printf(...) printf(__VA_ARGS__)
-#endif
-
 #include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "nfx.h"
 #include "nfnet.h"
 #include "bookkeeper.h"
 #include "collector.h"
 #include "exporter.h"
-#include "nf_common.h"
 #include "netflow_v1.h"
 #include "netflow_v5_v7.h"
 #include "netflow_v9.h"
 #include "ipfix.h"
 
 /* global */
-generic_exporter_t **exporter_list;
+exporter_t **exporter_list;
 
 /* local variables */
-#define MAX_EXPORTERS 65535
-static generic_exporter_t *exporter_root;
+#define MAX_EXPORTERS 65536
+static exporter_t *exporter_root;
 
 #include "nffile_inline.c"
 
@@ -84,7 +75,7 @@ static generic_exporter_t *exporter_root;
 /* functions */
 int InitExporterList(void) {
 
-	exporter_list = calloc(MAX_EXPORTERS, sizeof(generic_exporter_t *));
+	exporter_list = calloc(MAX_EXPORTERS, sizeof(exporter_t *));
 	if ( !exporter_list ) {
 		LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
 		return 0;
@@ -95,13 +86,19 @@ int InitExporterList(void) {
 } // End of InitExporterList
 
 int AddExporterInfo(exporter_info_record_t *exporter_record) {
-uint32_t id = exporter_record->sysid;
+uint32_t id;
 int i;
 char *p1, *p2;
 
+	if ( exporter_record->header.size != sizeof(exporter_info_record_t) ) {
+		LogError("Corrupt exporter record in %s line %d\n", __FILE__, __LINE__);
+		return 0;
+	}
+
 	// sanity check
+	id = exporter_record->sysid;
 	if ( id >= MAX_EXPORTERS ) {
-		LogError("Exporter id: %u out of range. Skip exporter", id);
+		LogError("Corrupt exporter record in %s line %d\n", __FILE__, __LINE__);
 		return 0;
 	}
 	if ( exporter_list[id] != NULL ) {
@@ -130,7 +127,7 @@ char *p1, *p2;
 	}
 
 	// slot[id] is now available
-	exporter_list[id] = (generic_exporter_t *)calloc(1, sizeof(generic_exporter_t));
+	exporter_list[id] = (exporter_t *)calloc(1, sizeof(exporter_t));
 	if ( !exporter_list[id] ) {
 		LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
 		return 0;
@@ -178,8 +175,19 @@ char *p1, *p2;
 } // End of AddExporterInfo
 
 int AddSamplerInfo(sampler_info_record_t *sampler_record) {
-uint32_t id = sampler_record->exporter_sysid;
-generic_sampler_t	**sampler;
+uint32_t id;
+sampler_t	**sampler;
+
+	if ( sampler_record->header.size != sizeof(sampler_info_record_t) ) {
+		LogError("Corrupt sampler record in %s line %d\n", __FILE__, __LINE__);
+		return 0;
+	}
+
+	id = sampler_record->exporter_sysid;
+	if ( id >= MAX_EXPORTERS) {
+		LogError("Corrupt sampler record in %s line %d\n", __FILE__, __LINE__);
+		return 0;
+	}
 
 	if ( !exporter_list[id] ) {
 		LogError("Exporter SysID: %u not found! - Skip sampler record", id);
@@ -196,7 +204,7 @@ generic_sampler_t	**sampler;
 		sampler = &((*sampler)->next);
 	}
 
-	*sampler = (generic_sampler_t *)malloc(sizeof(generic_sampler_t));
+	*sampler = (sampler_t *)malloc(sizeof(sampler_t));
 	if ( !*sampler ) {
 		LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
 		return 0;
@@ -225,6 +233,18 @@ generic_sampler_t	**sampler;
 int AddExporterStat(exporter_stats_record_t *stat_record) {
 int i, use_copy;
 exporter_stats_record_t *rec;
+size_t required;
+
+	if ( stat_record->header.size < sizeof(exporter_stats_record_t) ) {
+		LogError("Corrupt exporter record in %s line %d\n", __FILE__, __LINE__);
+		return 0;
+	}
+
+	required = sizeof(exporter_stats_record_t) + (stat_record->stat_count-1) * sizeof(struct exporter_stat_s);
+	if ((stat_record->stat_count == 0) || (stat_record->header.size != required)) {
+		LogError("Corrupt exporter record in %s line %d\n", __FILE__, __LINE__);
+		return 0;
+	}
 
 	// 64bit counters can be potentially unaligned
 	if ( ((ptrdiff_t)stat_record & 0x7) != 0 ) {
@@ -242,6 +262,10 @@ exporter_stats_record_t *rec;
 
 	for (i=0; i<rec->stat_count; i++ ) {
 		uint32_t id = rec->stat[i].sysid;
+		if ( id >= MAX_EXPORTERS ) {
+			LogError("Corrupt exporter record in %s line %d\n", __FILE__, __LINE__);
+			return 0;
+		}
 		if ( !exporter_list[id] ) {
 			LogError("Exporter SysID: %u not found! - Skip stat record record.\n");
 			continue;
@@ -267,7 +291,7 @@ int i;
 	i = 1;
 	while ( i < MAX_EXPORTERS  && exporter_list[i] != NULL ) {
 		exporter_info_record_t *exporter;
-       	generic_sampler_t *sampler;
+       	sampler_t *sampler;
 
 		exporter = &exporter_list[i]->info;
 		AppendToBuffer(nffile, (void *)exporter, exporter->header.size);
@@ -339,40 +363,10 @@ uint64_t total_bytes;
 
 		for ( i=0; i < nffile->block_header->NumRecords; i++ ) {
 			switch ( record->type ) {
-				// ExporterRecordType and SamplerRecordype tc versions only
-				case ExporterRecordType: {
-					#define IP_STRING_LEN   40
-					char ipstr[IP_STRING_LEN];
-					exporter_record_t *exporter_record = (exporter_record_t *)record ;
-					found = 1;
-					printf("\n");
-					if ( exporter_record->sa_family == AF_INET ) {
-						uint32_t _ip = htonl(exporter_record->ip.V4);
-						inet_ntop(AF_INET, &_ip, ipstr, sizeof(ipstr));
-						printf("SysID: %u, IP: %16s, version: %u, ID: %2u, Sequence Failures: %u\n", exporter_record->sysid,
-							ipstr, exporter_record->version, exporter_record->exporter_id, exporter_record->sequence_failure);
-					} else if ( exporter_record->sa_family == AF_INET6 ) {
-						uint64_t _ip[2];
-						_ip[0] = htonll(exporter_record->ip.V6[0]);
-						_ip[1] = htonll(exporter_record->ip.V6[1]);
-						inet_ntop(AF_INET6, &_ip, ipstr, sizeof(ipstr));
-						printf("SysID: %u, IP: %40s, version: %u, ID: %2u, Sequence Failures: %u\n", exporter_record->sysid,
-							ipstr, exporter_record->version, exporter_record->exporter_id, exporter_record->sequence_failure);
-					} else {
-						strncpy(ipstr, "<unknown>", IP_STRING_LEN);
-						printf("**** Exporter IP version unknown ****\n");
-					}
-				} break;
-				case SamplerRecordype: {
-					sampler_record_t  *sampler_record = (sampler_record_t *)record;;
-					if ( sampler_record->id < 0 ) {
-						printf("	Generic Sampler: mode: %u, interval: %u\n",
-							sampler_record->mode, sampler_record->interval);
-					} else {
-						printf("	Sampler: id: %i, mode: %u, interval: %u\n",
-							sampler_record->id, sampler_record->mode, sampler_record->interval);
-					}
-				} break;
+				case LegacyRecordType1: 
+				case LegacyRecordType2: 
+						LogError("Legacy record type: %i no longer supported\n", record->type);
+					 break;
 				case ExporterInfoRecordType:
 					found = 1;
 					if ( !AddExporterInfo((exporter_info_record_t *)record) ) {
@@ -405,7 +399,7 @@ uint64_t total_bytes;
 		char ipstr[IP_STRING_LEN];
 
 		exporter_info_record_t *exporter;
-       	generic_sampler_t *sampler;
+       	sampler_t *sampler;
 
 		printf("\n");
 		exporter = &exporter_list[i]->info;

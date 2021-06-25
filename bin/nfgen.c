@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020 Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -29,12 +27,6 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: haag $
- *
- *  $Id: nfgen.c 39 2009-11-25 08:11:15Z haag $
- *
- *  $LastChangedRevision: 39 $
- *	
  */
 
 #include "config.h"
@@ -57,15 +49,11 @@
 #include <stdint.h>
 #endif
 
-#include "nffile.h"
-#include "nfx.h"
-#include "nfnet.h"
-#include "nf_common.h"
 #include "util.h"
-#include "bookkeeper.h"
+#include "nfdump.h"
+#include "nffile.h"
 #include "collector.h"
-#include "exporter.h"
-#include "netflow_v5_v7.h"
+#include "nfx.h"
 
 extern extension_descriptor_t extension_descriptor[];
 
@@ -243,6 +231,7 @@ nffile_t			*nffile;
 	record.type	= CommonRecordType;
 
 	record.flags   		= 0;
+	record.nfversion	= 9;
 	record.exporter_sysid = 1;
 	record.tcp_flags   	= 1;
 	record.tos 		   	= 2;
@@ -400,7 +389,7 @@ nffile_t			*nffile;
 	SetIPaddress(&record,  PF_INET, "172.16.13.66", "192.168.170.112");
 	record.srcport 	 	= 0;
 	record.dstport 	 	= 8;
-	record.prot 	 	= 1;
+	record.prot 	 	= IPPROTO_ICMP;
 	record.tcp_flags 	= 0;
 	record.tos 		 	= 0;
 	record.dPkts 	 	= 50002;
@@ -431,7 +420,9 @@ nffile_t			*nffile;
 	UpdateRecord(&record);
 	PackRecord(&record, nffile);
 
-	SetIPaddress(&record,  PF_INET6, "2001:234:aabb::211:24ff:fe80:d01e", "2001:620::8:203:baff:fe52:38e5");
+	SetIPaddress(&record,  PF_INET6, "2001:234:aabb:cc:211:24ff:fe80:d01e", "2001:620:1f:8:203:baff:fe52:38e5");
+	record.src_mask		= 88;
+	record.dst_mask		= 48;
 	record.srcport 	 = 10240;
 	record.dstport 	 = 52345;
 	record.dPkts 	 = 10100;
@@ -460,6 +451,8 @@ nffile_t			*nffile;
 	SetIPaddress(&record,  PF_INET, "172.16.14.18", "192.168.170.113");
 //	SetNextIPaddress(&record,  PF_INET, "172.72.1.2");
 //	SetBGPNextIPaddress(&record,  PF_INET, "172.73.2.3");
+	record.src_mask		= 16;
+	record.dst_mask		= 24;
 	record.srcport 	 = 10240;
 	record.dstport 	 = 52345;
 	record.dPkts 	 = 10100000;

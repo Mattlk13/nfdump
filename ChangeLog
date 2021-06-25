@@ -1,4 +1,193 @@
-2019-07016
+2021-06-25
+- Fix json msec formating
+
+2021-05-19
+- Silence short packet logs due to small snaplen in pcaproc.c #221
+
+2021-05-05
+- Release 1.6.23
+
+2021-04-28
+- Fix potential FreeNode without valid Node in nfpcapd.
+
+2021-04-21
+- Add all non TCP/UDP IP protocols as streams in nfpcapd
+
+2021-04-20
+- Add mpls unwrap in nfpcapd. Skip MPLS labels
+- Add ESP to processed protocols in nfpcapd.
+- Some Code cleanup 
+
+2021-04-10
+- Change spin lock to native C11 lock
+- Cleanup code for issue #283
+
+2021-04-09
+- Fix minor nfpcapd issues
+- Add mpls unwrap in sflow code - adds mpls labels if available
+
+2021-03-12
+- Update rbtree.
+- Fix potential deadlock in nfpcapd if it terminates.
+
+2021-03-06
+- Add packet capture buffer size to nfpcapd
+
+2021-02-20
+- Fix sflow code extended field parsing. #262 and #273
+- Fix endless loop of nfexpire, if it does not find files
+
+2021-01-30
+- Fix processing deoding error for yaf exporter
+- Zero out tcp flags for non TCP records
+
+2021-01-16
+- Add reverse element enterprise ID 29305 for counter values
+- Add biFlow direction element 239
+- Add flow end reason element 136
+- Make -Tall the default for nfcapd to collect extensions
+
+2020-12-22
+- Code cleanup and boundary checks in option template processing
+
+2020-12-19
+- Implement element 160 (SystemInitTime) in option template
+
+2020-12-19
+- Add Element 160 (SystemInitTime) in flow record used by Huawei
+
+2020-12-05
+- Fix path handling for -l <dir>
+- Fix print plain numbers #263
+
+2020-11-21
+- Release 1.6.22
+
+2020-10-18
+- Fix nfreplay v5 time shift bug
+
+2020-10-17
+- add support for >=, <= comparators. #256. Thanks to piorek94
+- Fix yacc/bison warnings. Cleanup unused tokens
+- Fix syntax error 'flags AS' as AS is a reserved word. #255
+- Add element 139 for ICMP type/code in IPv6. #250
+- Fix IPv4/IPv6 statistics representation #252
+
+2020-09-12
+- Cleanup nip/xip filter syntax. Add filter syntax 'nip in [ <iplist>]'. Request #246
+
+2020-09-03
+- Add nfversion to nfpcapd
+
+2020-08-31
+- Add collected netflow/sflow version in nfdump record. Request #242
+- Fix GuessDir bug - issue #215
+
+2020-08-02
+- Re-address issue #231 - remove strict rule rfc 7011
+
+2020-08-02
+- Release 1.6.21
+- Address issue #159. Implement rfc 7011 and include sender UDP port into unique template identification
+- Address issue #236 Add token 'dir' equivalent to 'flowdir' in filter syntax
+
+2020-07-25
+- Add optional print direction ascending or descending to output of statistics -s and oredered printing -O. Request #235
+- Fix issue #234 
+- Fix #230 - Avoid use_syslog name clash on certain OS
+
+2020-06-20
+- Honor -n flag when printing sorted flow cache
+- Fix uninitialized variable printPlain
+- Fix bug #223 limit matchig flows -c
+- Restore old behaviour unlimiting output flows unless in -s stat
+- Fix ft2nfdump nexthop fields
+- Fix ft2nfdump extension map size
+- internal: put output parameters in a single struct
+- Fix GuessDir bug - issue #215
+- Compact Changelog
+- Fix GuessDir bug - issue #215 in flow exporter
+
+2020-03-29
+- Release 1.6.20
+- More cleanup on plain number printing
+- Fix plain numbers bug #213
+- Fix profiler filer bug
+
+2020-02-22
+- Release 1.6.19
+- Add Source security group tag (SGT 34000) issue #192
+- Modify heuristic for bidir flows #59
+- Add Push for new sgt tag.
+- Cleanup unused nffile records. Add nffileV2.h
+- Fix various compiler warnings and automake issues
+- Remove external global vars
+- Set verbose logging off by default in non daemon mode
+- Fix make check
+- Remove old legacy records
+- Major code rearrangement in order to prepare for futur versions of nfdump
+  Move extension definitions into extension files nfx.h
+  Move exporter definition into extension.h
+  nffile.h should only contain nffile data block handlich definitions
+- Fix compile error for FreeBSD #203
+- Cleanup header code - add new filter.h - free nfdump.h from dust
+- More code cleanup - delete nf_common - add output_fmt
+- Fix bug for IPv6 network cidr representation in raw and cvs output mode.
+- Remove unused old code. Fix for #197
+- Fix bidir export issues. Cleanup code. Fix for #195
+- Enable small time intervals < 60s. - #185
+- Cleanup old code
+- Fix minor nfpcapd issues
+- Fix gcc compile issue
+- Fix corrupt file handling #193
+- More code cleanup. Move code to dedicated files.
+- Restructure code for output into separate files.
+- Cleanup old code.
+- Fix bug #189 - valid json output
+- Fix issue #190. Add compile time option for JunOS.
+- Cleanup configure.ac
+- Fix various c11 compile issues
+- Cleanup old compat15 comments
+- Add vlan tags dot1qVlanId, 243, 254 - #182
+- Fix sflow issue with Arista switches
+- Fix ft2nfdump next hop and ip router fields
+- Cleanup and fix IPv6 network display in war records.
+- Fix compile issues
+- Fix output buffer size for lzo1x_decompress_safe()
+- Fix VerifyExtensionMap #179
+- Fix compile errors
+
+2019-08-05
+- Release 1.6.18
+- Fix nfdump.1 man page. #175
+- Fix off by 1 array. #173
+- Fix use after free in ModifyCompressFile
+- Add bound checks in AddExporterStat #174
+- Add bound checks in AddSamplerInfo #176
+- Add bound checks in AddExporterInfo
+- Fix checks in InsertExtensionMap #177
+- Remove COMPAT15 code - should no longer be needed.
+- Merge pull request #167
+- Cleanup old code
+- Replace depricated pcap_lookupdev call in nfpcapd
+
+2019-07-31
+- Add early record size sanity check also for nfprofile, nfanon and nfreplay
+
+2019-07-26
+- nfpcapd cleanup, add some more monitoring
+- Fix hbo_exporter.c:249_1 segfault 
+- Fix hbo_nffile_inline.c:85_1 segfault
+- Fix hbo_nfx.c:216_3 segfault
+- Update minilzo to v2.10
+- Change to safe lzo decompress function
+
+2019-07-25
+- Rework nfpcapd and add it officially to the nfdump collection.
+- Add nfpcapd man page
+- Fix potential unsigned integer underflow #171
+
+2019-07-16
 - Add latency extension if dumping flowcache
 
 2019-07-15

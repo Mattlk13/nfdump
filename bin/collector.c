@@ -1,8 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2016, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -56,24 +53,14 @@
 #include <stdint.h>
 #endif
 
-#ifndef DEVEL
-#   define dbg_printf(...) /* printf(__VA_ARGS__) */
-#else
-#   define dbg_printf(...) printf(__VA_ARGS__)
-#endif
-
 #include "util.h"
-#include "nf_common.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "bookkeeper.h"
 #include "collector.h"
 #include "nfx.h"
 
 #include "nffile_inline.c"
-
-/* globals */
-uint32_t default_sampling   = 1;
-uint32_t overwrite_sampling = 0;
 
 /* local variables */
 static uint32_t	exporter_sysid = 0;
@@ -195,22 +182,24 @@ int ok;
 		exit(255);
 	}
 
+	char *path = realpath(q, NULL);
+	if ( !path ) {
+		fprintf(stderr, "realpath() error %s: %s\n", q, strerror(errno));
+		return 0;
+	}
+
 	// check for existing path
-	if ( stat(q, &fstat) ) {
-		fprintf(stderr, "stat() error %s: %s\n", q, strerror(errno));
+	if ( stat(path, &fstat) ) {
+		fprintf(stderr, "stat() error %s: %s\n", path, strerror(errno));
 		return 0;
 	}
 	if ( !(fstat.st_mode & S_IFDIR) ) {
-		fprintf(stderr, "No such directory: %s\n", q);
+		fprintf(stderr, "Not a directory: %s\n", path);
 		return 0;
 	}
 
 	// remember path
-	(*source)->datadir = strdup(q);
-	if ( !(*source)->datadir ) {
-		fprintf(stderr, "strdup() error: %s\n", strerror(errno));
-		return 0;
-	}
+	(*source)->datadir = path;
 
 	// cache current collector file
 	if ( snprintf(s, MAXPATHLEN-1, "%s/%s.%lu", (*source)->datadir , NF_DUMPFILE, (unsigned long)getpid() ) >= (MAXPATHLEN-1)) {
@@ -226,6 +215,54 @@ int ok;
 	return 1;
 
 } // End of AddFlowSource
+
+int AddFlowSourceFromFile(FlowSource_t **FlowSource, char *path) {
+struct stat fstat;
+char entry[MAXPATHLEN];
+FILE *inputfile = NULL;
+int ret = 0;
+
+	if ( strlen(path) >= MAXPATHLEN ) {
+		fprintf(stderr, "Path too long: %s\n", path);
+		return 1;
+	}
+
+	if ( stat(path, &fstat) ) {
+		fprintf(stderr, "stat() error %s: %s\n", path, strerror(errno));
+		return 2;
+	}
+	if ( !(fstat.st_mode & S_IFREG) ) {
+		fprintf(stderr, "Not a file: %s\n", path);
+		return 3;
+	}
+
+	inputfile = fopen(path, "r");
+	if ( NULL == inputfile ) {
+		fprintf(stderr, "Cannot open file %s: %s\n", path, strerror(errno));
+		return 4;
+	}
+
+	for( ; fgets(entry,sizeof(entry),inputfile) != NULL ; ) {
+		int len = strlen(entry);
+
+		if ( entry[len-2] == '\n' || entry[len-2] == '\r' )
+			entry[len-2] = 0;
+		if ( entry[len-1] == '\n' || entry[len-1] == '\r' )
+			entry[len-1] = 0;
+
+		if ( !AddFlowSource(FlowSource, entry) ) {
+			fprintf(stderr, "Could not add flow source %s\n", entry);
+			ret = 5;
+		}
+	}
+
+	if ( fclose(inputfile) ) {
+		fprintf(stderr, "Cannot close file %s: %s\n", path, strerror(errno));
+		return 6;
+	}
+
+	return ret;
+} // End of AddFlowSourceFromFile
 
 int AddDefaultFlowSource(FlowSource_t **FlowSource, char *ident, char *path) {
 struct 	stat 	fstat;
@@ -383,10 +420,6 @@ int				err;
 	inet_ntop(ss->ss_family, ptr, ident, sizeof(ident));
 	ident[99] = '\0';
 	dbg_printf("Dynamic Flow Source IP: %s\n", ident);
-
-	if ( strchr(ident, ':') ) { // condense IPv6 addresses
-		condense_v6(ident);
-	}
 
 	s = ident;
 	while ( *s != '\0' ) {
@@ -574,11 +607,11 @@ int FlushInfoSampler(FlowSource_t *fs, sampler_info_record_t *sampler) {
 } // End of FlushInfoSampler
 
 void FlushStdRecords(FlowSource_t *fs) {
-generic_exporter_t *e = fs->exporter_data;
+exporter_t *e = fs->exporter_data;
 int i;
 
 	while ( e ) {
-		generic_sampler_t *sampler = e->sampler;
+		sampler_t *sampler = e->sampler;
 		AppendToBuffer(fs->nffile, (void *)&(e->info), e->info.header.size);
 		while ( sampler ) {
 			AppendToBuffer(fs->nffile, (void *)&(sampler->info), sampler->info.header.size);
@@ -596,7 +629,7 @@ int i;
 } // End of FlushStdRecords
 
 void FlushExporterStats(FlowSource_t *fs) {
-generic_exporter_t *e = fs->exporter_data;
+exporter_t *e = fs->exporter_data;
 exporter_stats_record_t	*exporter_stats;
 uint32_t i, size;
 
@@ -654,17 +687,3 @@ uint32_t i, size;
  
 } // End of FlushExporterStats
 
-
-
-int HasOptionTable(FlowSource_t *fs, uint16_t id ) {
-option_offset_t *t;
-
-	t = fs->option_offset_table;
-	while ( t && t->id != id )
-		t = t->next;
-
-	dbg_printf("Has option table: %s\n", t == NULL ? "not found" : "found");
-
-	return t != NULL;
-
-} // End of HasOptionTable

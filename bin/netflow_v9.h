@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -257,6 +255,8 @@ typedef struct common_header_s {
 
 #define NF9_BGP_ADJ_NEXT_AS 	128
 #define NF9_BGP_ADJ_PREV_AS 	129
+#define NF9_dot1qVlanId			243
+#define NF9_postDot1qVlanId		254
 
 // CISCO ASA NSEL extension - Network Security Event Logging
 #define NF_F_FLOW_BYTES				   85
@@ -295,10 +295,14 @@ typedef struct common_header_s {
 #define NF_F_INITIATORPACKETS		298
 #define NF_F_RESPONDERPACKETS		299
 
+// Zone-Based Firewall Logging
+#define NF_FW_CTS_SRC_SGT			34000
+
 // Cisco ASR 1000 series NEL extension - Nat Event Logging
 #define NF_N_NAT_EVENT				230
 #define NF_N_INGRESS_VRFID			234
 #define NF_N_EGRESS_VRFID			235
+
 #define NF_F_XLATE_PORT_BLOCK_START 361
 #define NF_F_XLATE_PORT_BLOCK_END   362
 #define NF_F_XLATE_PORT_BLOCK_STEP  363
@@ -313,7 +317,7 @@ typedef struct common_header_s {
 #define NF9_NPROBE_APPL_LATENCY_USEC	57559
 
 /* prototypes */
-int Init_v9(void);
+int Init_v9(int v, uint32_t sampling, uint32_t overwrite);
 
 void Process_v9(void *in_buff, ssize_t in_buff_cnt, FlowSource_t *fs);
 

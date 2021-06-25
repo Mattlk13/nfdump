@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -53,17 +51,13 @@
 #include <stdint.h>
 #endif
 
+#include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "nfx.h"
-#include "util.h"
+#include "exporter.h"
 #include "flist.h"
 #include "panonymizer.h"
-
-#if ( SIZEOF_VOID_P == 8 )
-typedef uint64_t    pointer_addr_t;
-#else
-typedef uint32_t    pointer_addr_t;
-#endif
 
 // module limited globals
 extension_map_list_t *extension_map_list;
@@ -181,12 +175,7 @@ nffile_t			*nffile_r;
 nffile_t			*nffile_w;
 int 		i, done, ret, cnt, verbose;
 char		outfile[MAXPATHLEN], *cfile;
-#ifdef COMPAT15
-int	v1_map_done = 0;
-#endif
 
-
-	setbuf(stderr, NULL);
 	cnt 	= 1;
 	verbose = 1;
 
@@ -216,7 +205,7 @@ int	v1_map_done = 0;
 		snprintf(outfile,MAXPATHLEN-1, "%s-tmp", cfile);
 		outfile[MAXPATHLEN-1] = '\0';
 		if ( verbose )
-			fprintf(stderr, " %i Processing %s\r", cnt++, cfile);
+			LogInfo(" %i Processing %s", cnt++, cfile);
 	}
 
 	if ( wfile )
@@ -279,7 +268,7 @@ int	v1_map_done = 0;
 					LogError("(NULL) input file name error in %s line %d\n", __FILE__, __LINE__);
 					return;
 				}
-				LogError(" %i Processing %s\r", cnt++, cfile);
+				printf(" %i Processing %s\r", cnt++, cfile);
 
 				if ( wfile == NULL ) {
 					snprintf(outfile,MAXPATHLEN-1, "%s-tmp", cfile);
@@ -304,52 +293,20 @@ int	v1_map_done = 0;
 				} break; // not really needed
 		}
 
-#ifdef COMPAT15
-		if ( nffile_r->block_header->id == DATA_BLOCK_TYPE_1 ) {
-			common_record_v1_t *v1_record = (common_record_v1_t *)nffile_r->buff_ptr;
-			// create an extension map for v1 blocks
-			if ( v1_map_done == 0 ) {
-				extension_map_t *map = malloc(sizeof(extension_map_t) + 2 * sizeof(uint16_t) );
-				if ( ! map ) {
-					LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
-					exit(255);
-				}
-				map->type 	= ExtensionMapType;
-				map->size 	= sizeof(extension_map_t) + 2 * sizeof(uint16_t);
-				map->map_id = 0;
-				map->ex_id[0]  = EX_IO_SNMP_2;
-				map->ex_id[1]  = EX_AS_2;
-				map->ex_id[2]  = 0;
-
-				Insert_Extension_Map(extension_map_list, map);
-				AppendToBuffer(nffile_w, (void *)map, map->size);
-
-				v1_map_done = 1;
-			}
-
-			// convert the records to v2
-			for ( i=0; i < nffile_r->block_header->NumRecords; i++ ) {
-				common_record_t *v2_record = (common_record_t *)v1_record;
-				Convert_v1_to_v2((void *)v1_record);
-				// now we have a v2 record -> use size of v2_record->size
-				v1_record = (common_record_v1_t *)((pointer_addr_t)v1_record + v2_record->size);
-			}
-			nffile_r->block_header->id = DATA_BLOCK_TYPE_2;
-		}
-#endif
-
-		if ( nffile_r->block_header->id == Large_BLOCK_Type ) {
-			// skip
-			continue;
-		}
-
 		if ( nffile_r->block_header->id != DATA_BLOCK_TYPE_2 ) {
-			fprintf(stderr, "Can't process block type %u. Skip block.\n", nffile_r->block_header->id);
+			LogError("Can't process block type %u. Skip block", nffile_r->block_header->id);
 			continue;
 		}
 
 		flow_record = nffile_r->buff_ptr;
+		uint32_t sumSize = 0;
 		for ( i=0; i < nffile_r->block_header->NumRecords; i++ ) {
+			if ( (sumSize + flow_record->size) > ret ) {
+				LogError("Corrupt data file. Inconsistent block size in %s line %d\n", __FILE__, __LINE__);
+				exit(255);
+			}
+			sumSize += flow_record->size;
+
 			switch ( flow_record->type ) { 
 				case CommonRecordType: {
 					uint32_t map_id = flow_record->ext_map;
@@ -369,14 +326,20 @@ int	v1_map_done = 0;
 				case ExtensionMapType: {
 					extension_map_t *map = (extension_map_t *)flow_record;
 
-					if ( Insert_Extension_Map(extension_map_list, map) ) {
-					 	// flush new map
-					} // else map already known and flushed
-					AppendToBuffer(nffile_w, (void *)map, map->size);
-
+					int ret = Insert_Extension_Map(extension_map_list, map);
+					switch (ret) {
+						case 0:
+							break; // map already known and flushed
+						case 1:
+							AppendToBuffer(nffile_w, (void *)map, map->size);
+							break;
+						default:
+							LogError("Corrupt data file. Unable to decode at %s line %d\n", __FILE__, __LINE__);
+							exit(255);
+					}
 					} break; 
-				case ExporterRecordType:
-				case SamplerRecordype:
+				case LegacyRecordType1:
+				case LegacyRecordType2:
 				case ExporterInfoRecordType:
 				case ExporterStatRecordType:
 				case SamplerInfoRecordype:
@@ -384,7 +347,7 @@ int	v1_map_done = 0;
 					break;
 
 				default: {
-					fprintf(stderr, "Skip unknown record type %i\n", flow_record->type);
+					LogError("Skip unknown record type %i", flow_record->type);
 				}
 			}
 			// Advance pointer by number of bytes for netflow record
@@ -405,8 +368,7 @@ int	v1_map_done = 0;
 
 	DisposeFile(nffile_w);
 
-	LogError("\n");
-	LogError("Processed %i files.\n", --cnt);
+	LogError("Processed %i files", --cnt);
 
 } // End of process_data
 
@@ -416,6 +378,7 @@ char 		*rfile, *Rfile, *wfile, *Mdirs;
 int			c;
 char		CryptoPAnKey[32];
 
+	memset((void *)CryptoPAnKey, 0, sizeof(CryptoPAnKey));
 	rfile = Rfile = Mdirs = wfile = NULL;
 	while ((c = getopt(argc, argv, "K:L:r:M:R:w:")) != EOF) {
 		switch (c) {
@@ -426,13 +389,13 @@ char		CryptoPAnKey[32];
 				break;
 			case 'K':
 				if ( !ParseCryptoPAnKey(optarg, CryptoPAnKey) ) {
-					fprintf(stderr, "Invalid key '%s' for CryptoPAn!\n", optarg);
+					LogError("Invalid key '%s' for CryptoPAn", optarg);
 					exit(255);
 				}
 				PAnonymizer_Init((uint8_t *)CryptoPAnKey);
 				break;
 			case 'L':
-				if ( !InitLog("argv[0]", optarg) )
+				if ( !InitLog(0, "argv[0]", optarg, 0) )
 					exit(255);
 				break;
 			case 'r':
@@ -455,12 +418,17 @@ char		CryptoPAnKey[32];
 		}
 	}
 
+	if ( CryptoPAnKey[0] == '\0' ) {
+		LogError("Expect -K <key> - 32 bytes key");
+		exit(255);
+	}
+
 	if ( rfile && Rfile ) {
-		fprintf(stderr, "-r and -R are mutually exclusive. Please specify either -r or -R\n");
+		LogError("-r and -R are mutually exclusive. Please specify either -r or -R");
 		exit(255);
 	}
 	if ( Mdirs && !(rfile || Rfile) ) {
-		fprintf(stderr, "-M needs either -r or -R to specify the file or file list. Add '-R .' for all files in the directories.\n");
+		LogError("-M needs either -r or -R to specify the file or file list. Add '-R .' for all files in the directories");
 		exit(255);
 	}
 

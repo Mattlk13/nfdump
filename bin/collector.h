@@ -1,7 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -41,62 +39,19 @@
 #include <stdint.h>
 #endif
 #include <sys/socket.h>
+#include <netinet/in.h>
 
+#include "exporter.h"
 #include "bookkeeper.h"
 #include "nffile.h"
 
 #define FNAME_SIZE  256
-#define IDENT_SIZE  32
 
-typedef struct srecord_s {
-    char    fname[FNAME_SIZE];      // file name
-    char    subdir[FNAME_SIZE];     // subdir name
-    char    tstring[16];            // actually 12 needed e.g. 200411011230
-    time_t  tstamp;                 // UNIX time stamp
-	int		failed;					// in case of an error
-} srecord_t;
-
-// common_record_t defines ext_map as uint_8, so max 256 extension maps allowed.
-// should be enough anyway
-
-typedef struct option_offset_s {
-	struct option_offset_s *next;
-	uint32_t	id;					// table id
-	uint32_t	flags;				// info about this map
-
-	// sampling offsets
-#define HAS_SAMPLER_DATA	1
-	uint16_t	offset_id;
-	uint16_t    sampler_id_length;
-	uint16_t	offset_mode;
-	uint16_t	offset_interval;
-
-#define HAS_STD_SAMPLER_DATA 2
-	uint16_t	offset_std_sampler_interval;
-	uint16_t	offset_std_sampler_algorithm;
-
-} option_offset_t;
-
-typedef struct generic_sampler_s {
-	struct generic_sampler_s *next;
-	sampler_info_record_t	info;
-} generic_sampler_t;
-
-typedef struct generic_exporter_s {
-	// link chain
-	struct generic_exporter_s *next;
-
-	// generic exporter information
-	exporter_info_record_t info;
-
-	uint64_t	packets;			// number of packets sent by this exporter
-	uint64_t	flows;				// number of flow records sent by this exporter
-	uint32_t	sequence_failure;	// number of sequence failues
-	uint32_t	padding_errors;		// number of sequence failues
-
-	generic_sampler_t		*sampler;
-
-} generic_exporter_t;
+/* common minimum netflow header for all versions */
+typedef struct common_flow_header {
+  uint16_t  version;
+  uint16_t  count;
+} common_flow_header_t;
 
 typedef struct FlowSource_s {
 	// link
@@ -106,6 +61,7 @@ typedef struct FlowSource_s {
 	char 				Ident[IDENTLEN];
 	ip_addr_t			ip;
 	uint32_t			sa_family;
+	in_port_t			port;
 
 	int					any_source;
 	bookkeeper_t 		*bookkeeper;
@@ -121,7 +77,7 @@ typedef struct FlowSource_s {
 	uint64_t			last_seen;		// in msec
 
 	// Any exporter specific data
-	generic_exporter_t	*exporter_data;
+	exporter_t			*exporter_data;
 	uint32_t			exporter_count;
 	struct timeval		received;
 
@@ -134,8 +90,6 @@ typedef struct FlowSource_s {
 		extension_map_t	**maps;
 	} extension_map_list;
 
-	option_offset_t *option_offset_table;
-
 } FlowSource_t;
 
 /* input buffer size, to read data from the network */
@@ -143,6 +97,8 @@ typedef struct FlowSource_s {
 
 // prototypes
 int AddFlowSource(FlowSource_t **FlowSource, char *ident);
+
+int AddFlowSourceFromFile(FlowSource_t **FlowSource, char *path);
 
 int AddDefaultFlowSource(FlowSource_t **FlowSource, char *ident, char *path);
 
@@ -165,10 +121,6 @@ void FlushExporterStats(FlowSource_t *fs);
 int FlushInfoExporter(FlowSource_t *fs, exporter_info_record_t *exporter);
 
 int FlushInfoSampler(FlowSource_t *fs, sampler_info_record_t *sampler);
-
-int HasOptionTable(FlowSource_t *fs, uint16_t id );
-
-void launcher (char *commbuff, FlowSource_t *FlowSource, char *process, int expire);
 
 /* Default time window in seconds to rotate files */
 #define TIME_WINDOW	  	300

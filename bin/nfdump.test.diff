@@ -1,188 +1,188 @@
 3c3
-<   Flags        =              0x06 FLOW, Unsampled
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
+>   Flags        =              0x00 NETFLOW v9, Unsampled
 6c6
 <   size         =               196
 ---
 >   size         =               172
-58c58
-<   Flags        =              0x06 FLOW, Unsampled
+60c60
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-61c61
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+63c63
 <   size         =               196
 ---
 >   size         =               172
-113c113
-<   Flags        =              0x06 FLOW, Unsampled
+117c117
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-116c116
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+120c120
 <   size         =               196
 ---
 >   size         =               172
-168c168
-<   Flags        =              0x06 FLOW, Unsampled
+174c174
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-171c171
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+177c177
 <   size         =               196
 ---
 >   size         =               172
-223c223
-<   Flags        =              0x06 FLOW, Unsampled
+231c231
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-226c226
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+234c234
 <   size         =               196
 ---
 >   size         =               172
-278c278
-<   Flags        =              0x06 FLOW, Unsampled
+288c288
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-281c281
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+291c291
 <   size         =               196
 ---
 >   size         =               172
-333c333
-<   Flags        =              0x06 FLOW, Unsampled
+345c345
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-336c336
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+348c348
 <   size         =               196
 ---
 >   size         =               172
-388c388
-<   Flags        =              0x06 FLOW, Unsampled
+402c402
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-391c391
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+405c405
 <   size         =               196
 ---
 >   size         =               172
-443c443
-<   Flags        =              0x06 FLOW, Unsampled
+459c459
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-446c446
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+462c462
 <   size         =               196
 ---
 >   size         =               172
-498c498
-<   Flags        =              0x06 FLOW, Unsampled
+516c516
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-501c501
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+519c519
 <   size         =               196
 ---
 >   size         =               172
-553c553
-<   Flags        =              0x06 FLOW, Unsampled
+573c573
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-556c556
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+576c576
 <   size         =               196
 ---
 >   size         =               172
-608c608
-<   Flags        =              0x06 FLOW, Unsampled
+630c630
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-611c611
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+633c633
 <   size         =               196
 ---
 >   size         =               172
-663c663
-<   Flags        =              0x06 FLOW, Unsampled
+687c687
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-666c666
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+690c690
 <   size         =               196
 ---
 >   size         =               172
-718c718
-<   Flags        =              0x06 FLOW, Unsampled
+744c744
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-721c721
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+747c747
 <   size         =               196
 ---
 >   size         =               172
-772c772
-<   Flags        =              0x06 FLOW, Unsampled
+800c800
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x00 FLOW, Unsampled
-775c775
+>   Flags        =              0x00 NETFLOW v9, Unsampled
+803c803
 <   size         =               196
 ---
 >   size         =               172
-827c827
-<   Flags        =              0x07 FLOW, Unsampled
+857c857
+<   Flags        =              0x07 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x01 FLOW, Unsampled
-830c830
+>   Flags        =              0x01 NETFLOW v9, Unsampled
+860c860
 <   size         =               220
 ---
 >   size         =               196
-882c882
-<   Flags        =              0x07 FLOW, Unsampled
+914c914
+<   Flags        =              0x07 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x01 FLOW, Unsampled
-885c885
+>   Flags        =              0x01 NETFLOW v9, Unsampled
+917c917
 <   size         =               220
 ---
 >   size         =               196
-937c937
-<   Flags        =              0x07 FLOW, Unsampled
+971c971
+<   Flags        =              0x07 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x05 FLOW, Unsampled
-940c940
+>   Flags        =              0x05 NETFLOW v9, Unsampled
+974c974
 <   size         =               220
 ---
 >   size         =               200
-992c992
-<   Flags        =              0x07 FLOW, Unsampled
+1028c1028
+<   Flags        =              0x07 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x03 FLOW, Unsampled
-995c995
+>   Flags        =              0x03 NETFLOW v9, Unsampled
+1031c1031
 <   size         =               220
 ---
 >   size         =               200
-1050c1050
+1088c1088
 <   size         =               220
 ---
 >   size         =               204
-1102c1102
-<   Flags        =              0x06 FLOW, Unsampled
+1142c1142
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x04 FLOW, Unsampled
-1105c1105
+>   Flags        =              0x04 NETFLOW v9, Unsampled
+1145c1145
 <   size         =               196
 ---
 >   size         =               176
-1157c1157
-<   Flags        =              0x06 FLOW, Unsampled
+1199c1199
+<   Flags        =              0x06 NETFLOW v9, Unsampled
 ---
->   Flags        =              0x02 FLOW, Unsampled
-1160c1160
+>   Flags        =              0x02 NETFLOW v9, Unsampled
+1202c1202
 <   size         =               196
 ---
 >   size         =               176
-1215c1215
+1259c1259
 <   size         =               196
 ---
 >   size         =               180
-1270c1270
+1316c1316
 <   size         =               200
 ---
 >   size         =               184
-1325c1325
+1373c1373
 <   size         =               200
 ---
 >   size         =               184
-1380c1380
+1430c1430
 <   size         =               204
 ---
 >   size         =               188

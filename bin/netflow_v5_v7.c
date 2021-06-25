@@ -1,8 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2016, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -44,6 +41,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <assert.h>
 #include <string.h>
 
 #ifdef HAVE_STDINT_H
@@ -51,27 +49,23 @@
 #endif
 
 #include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "nfx.h"
 #include "nfnet.h"
-#include "nf_common.h"
+#include "output_raw.h"
 #include "bookkeeper.h"
 #include "collector.h"
 #include "exporter.h"
 #include "netflow_v5_v7.h"
 
-#ifndef DEVEL
-#   define dbg_printf(...) /* printf(__VA_ARGS__) */
-#else
-#   define dbg_printf(...) printf(__VA_ARGS__)
-#endif
-
-extern int verbose;
 extern extension_descriptor_t extension_descriptor[];
-extern uint32_t default_sampling;
-extern uint32_t overwrite_sampling;
 
 /* module limited globals */
+static int verbose;
+static uint32_t default_sampling;
+static uint32_t overwrite_sampling;
+
 static extension_info_t v5_extension_info;		// common for all v5 records
 static uint16_t v5_output_record_size, v5_output_record_base_size;
 
@@ -83,10 +77,10 @@ static uint16_t v5_full_mapp[] = { EX_IO_SNMP_2, EX_AS_2, EX_MULIPLE, EX_NEXT_HO
 #define V5_BLOCK_DATA_SIZE (sizeof(ipv4_block_t) - sizeof(uint32_t) + 2 * sizeof(uint64_t))
 
 typedef struct exporter_v5_s {
-	// identical to generic_exporter_t
+	// identical to exporter_t
 	struct exporter_v5_s *next;
 
-	// generic exporter information
+	// exporter information
 	exporter_info_record_t info;
 
 	uint64_t	packets;			// number of packets sent by this exporter
@@ -94,9 +88,9 @@ typedef struct exporter_v5_s {
 	uint32_t	sequence_failure;	// number of sequence failues
 	uint32_t	padding_errors;		// number of sequence failues
 
-	// generic sampler
-	generic_sampler_t		*sampler;
-	// end of generic_exporter_t
+	// sampler
+	sampler_t		*sampler;
+	// end of exporter_t
 
 	// sequence vars
 	int64_t	 last_sequence;
@@ -123,12 +117,19 @@ static inline int CheckBufferSpace(nffile_t *nffile, size_t required);
 
 #include "nffile_inline.c"
 
-int Init_v5_v7_input(void) {
+int Init_v5_v7_input(int v, uint32_t sampling, uint32_t overwrite) {
 int i, id, map_index;
 int extension_size;
 uint16_t	map_size;
 
-	extension_size   = 0;
+	assert(sizeof(netflow_v5_header_t) == NETFLOW_V5_HEADER_LENGTH);
+	assert(sizeof(netflow_v5_record_t) == NETFLOW_V5_RECORD_LENGTH);
+
+	verbose 		   = v;
+	default_sampling   = sampling;
+	overwrite_sampling = overwrite;
+	extension_size	   = 0;
+
 	// prepare v5 extension map
 	v5_extension_info.map		   = NULL;
 	v5_extension_info.next		   = NULL;
@@ -153,7 +154,7 @@ uint16_t	map_size;
 	if ( ( map_size & 0x3 ) != 0 )
 		map_size += 2;
 
-	// Create a generic v5 extension map
+	// Create a v5 extension map
 	v5_extension_info.map = (extension_map_t *)malloc((size_t)map_size);
 	if ( !v5_extension_info.map ) {
 		LogError("Process_v5: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
@@ -184,7 +185,7 @@ uint16_t	map_size;
 
 static inline exporter_v5_t *GetExporter(FlowSource_t *fs, netflow_v5_header_t *header) {
 exporter_v5_t **e = (exporter_v5_t **)&(fs->exporter_data);
-generic_sampler_t *sampler;
+sampler_t *sampler;
 uint16_t	engine_tag = ntohs(header->engine_tag);
 uint16_t	version    = ntohs(header->version);
 #define IP_STRING_LEN   40
@@ -218,7 +219,7 @@ char ipstr[IP_STRING_LEN];
 	(*e)->flows				= 0;
 	(*e)->first	 			= 1;
 
-	sampler = (generic_sampler_t *)malloc(sizeof(generic_sampler_t));
+	sampler = (sampler_t *)malloc(sizeof(sampler_t));
 	if ( !sampler ) {
 		LogError("Process_v5: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
 		return NULL;
@@ -236,7 +237,7 @@ char ipstr[IP_STRING_LEN];
 	if ( sampler->info.interval == 0 )
 		sampler->info.interval = default_sampling;
 
-	// copy the v5 generic extension map
+	// copy the v5 extension map
 	(*e)->extension_map		= (extension_map_t *)malloc(v5_extension_info.map->size);
 	if ( !(*e)->extension_map ) {
 		LogError("Process_v5: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
@@ -421,13 +422,15 @@ char		*string;
 	  			common_record->size			  = v5_output_record_size;
 
 				// v5 common fields
-	  			common_record->srcport		  = ntohs(v5_record->srcport);
-	  			common_record->dstport		  = ntohs(v5_record->dstport);
-	  			common_record->tcp_flags	  = v5_record->tcp_flags;
-	  			common_record->prot			  = v5_record->prot;
-	  			common_record->tos			  = v5_record->tos;
-	  			common_record->fwd_status 	  = 0;
-	  			common_record->reserved 	  = 0;
+	  			common_record->srcport		 = ntohs(v5_record->srcport);
+	  			common_record->dstport		 = ntohs(v5_record->dstport);
+	  			common_record->tcp_flags	 = v5_record->tcp_flags;
+	  			common_record->prot			 = v5_record->prot;
+	  			common_record->tos			 = v5_record->tos;
+	  			common_record->fwd_status 	 = 0;
+	  			common_record->nfversion	 = 5;
+	  			common_record->biFlowDir	 = 0;
+	  			common_record->flowEndReason = 0;
 
 				// v5 typed data as fixed struct v5_block
 	  			ipv4_block->srcaddr	= ntohl(v5_record->srcaddr);
@@ -608,7 +611,7 @@ char		*string;
 					master_record_t master_record;
 					memset((void *)&master_record, 0, sizeof(master_record_t));
 					ExpandRecord_v2((common_record_t *)common_record, &v5_extension_info, &(exporter->info), &master_record);
-				 	format_file_block_record(&master_record, &string, 0);
+				 	flow_record_to_raw(&master_record, &string, 0);
 					printf("%s\n", string);
 				}
 
@@ -664,6 +667,9 @@ char		*string;
  */
 void Init_v5_v7_output(send_peer_t *peer) {
 
+	assert(sizeof(netflow_v5_header_t) == NETFLOW_V5_HEADER_LENGTH);
+	assert(sizeof(netflow_v5_record_t) == NETFLOW_V5_RECORD_LENGTH);
+
 	v5_output_header = (netflow_v5_header_t *)peer->send_buffer;
 	v5_output_header->version 		= htons(5);
 	v5_output_header->SysUptime		= 0;
@@ -692,17 +698,21 @@ uint32_t	i, id, t1, t2;
 
 	if ( output_engine.first ) {	// first time a record is added
 		// boot time is set one day back - assuming that the start time of every flow does not start ealier
-		boot_time  			 		= (uint64_t)(master_record->first - 86400)*1000;
-		v5_output_header->unix_secs = htonl(master_record->first - 86400);
+		boot_time = (uint64_t)(master_record->first - 86400)*1000LL;
 		cnt   	 = 0;
 		output_engine.first 	 = 0;
 	}
 	if ( cnt == 0 ) {
-		peer->buff_ptr  = (void *)((pointer_addr_t)peer->send_buffer + NETFLOW_V5_HEADER_LENGTH);
-		v5_output_record = (netflow_v5_record_t *)((pointer_addr_t)v5_output_header + (pointer_addr_t)sizeof(netflow_v5_header_t));	
-		output_engine.sequence = output_engine.last_sequence + output_engine.last_count;
+		v5_output_record = (netflow_v5_record_t *)((pointer_addr_t)peer->send_buffer + NETFLOW_V5_HEADER_LENGTH);
+		peer->buff_ptr  = (void *)v5_output_record;
+		memset(peer->buff_ptr, 0, NETFLOW_V5_MAX_RECORDS * NETFLOW_V5_RECORD_LENGTH);
+
+		output_engine.sequence += output_engine.last_count;
 		v5_output_header->flow_sequence	= htonl(output_engine.sequence);
-		output_engine.last_sequence = output_engine.sequence;
+
+		uint32_t unix_secs = master_record->last + 3600;
+		v5_output_header->unix_secs = htonl(unix_secs);
+		v5_output_header->SysUptime = htonl((uint32_t)(unix_secs * 1000 - boot_time));
 	}
 
 	t1 	= (uint32_t)(1000LL * (uint64_t)master_record->first + (uint64_t)master_record->msec_first - boot_time);
@@ -727,11 +737,6 @@ uint32_t	i, id, t1, t2;
   	v5_output_record->output	= htons(master_record->output);
   	v5_output_record->src_as	= htons(master_record->srcas);
   	v5_output_record->dst_as	= htons(master_record->dstas);
-	v5_output_record->src_mask 	= 0;
-	v5_output_record->dst_mask 	= 0;
-	v5_output_record->pad1 		= 0;
-	v5_output_record->pad2 		= 0;
-  	v5_output_record->nexthop	= 0;
 
 	i = 0;
 	while ( (id = extension_map->ex_id[i]) != 0 ) {

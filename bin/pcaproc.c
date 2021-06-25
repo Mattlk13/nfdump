@@ -1,37 +1,34 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2016, Peter Haag
- *  Copyright (c) 2014, Peter Haag
+ *  Copyright (c) 2014-2020, Peter Haag
  *  All rights reserved.
- *  
- *  Redistribution and use in source and binary forms, with or without 
+ *
+ *  Redistribution and use in source and binary forms, with or without
  *  modification, are permitted provided that the following conditions are met:
- *  
- *   * Redistributions of source code must retain the above copyright notice, 
+ *
+ *   * Redistributions of source code must retain the above copyright notice,
  *	 this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright notice, 
- *	 this list of conditions and the following disclaimer in the documentation 
+ *   * Redistributions in binary form must reproduce the above copyright notice,
+ *	 this list of conditions and the following disclaimer in the documentation
  *	 and/or other materials provided with the distribution.
- *   * Neither the name of the author nor the names of its contributors may be 
- *	 used to endorse or promote products derived from this software without 
+ *   * Neither the name of the author nor the names of its contributors may be
+ *	 used to endorse or promote products derived from this software without
  *	 specific prior written permission.
- *  
- *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
- *  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
- *  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- *  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
- *  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
- *  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
- *  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
- *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ *  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ *  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ *  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ *  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ *  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ *  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ *  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
- *  
- *  
+ *
  */
 
-#ifdef HAVE_CONFIG_H 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
@@ -66,33 +63,25 @@
 
 #include <pcap.h>
 
+#include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "bookkeeper.h"
 #include "collector.h"
 #include "flowtree.h"
 #include "ipfrag.h"
 #include "pcaproc.h"
-#include "content_dns.h"
-#include "util.h"
 #include "netflow_pcap.h"
 
-static inline void ProcessTCPFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
-
-static inline void ProcessUDPFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
-
-static inline void ProcessICMPFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
-
-static inline void ProcessOtherFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
-
 struct pcap_timeval {
-	int32_t tv_sec;	   /* seconds */
-	int32_t tv_usec;	  /* microseconds */
+	int32_t tv_sec;   /* seconds */
+	int32_t tv_usec;  /* microseconds */
 };
 
 struct pcap_sf_pkthdr {
 	struct pcap_timeval ts; /* time stamp */
-	uint32_t	caplen;	 /* length of portion present */
-	uint32_t	len;		/* length this packet (off wire) */
+	uint32_t	caplen;	    /* length of portion present */
+	uint32_t	len;        /* length this packet (off wire) */
 };
 
 typedef struct vlan_hdr_s {
@@ -105,7 +94,13 @@ typedef struct gre_hdr_s {
   uint16_t type;
 } gre_hdr_t;
 
-int lock_sync = 0;
+static inline void ProcessTCPFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
+
+static inline void ProcessUDPFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
+
+static inline void ProcessICMPFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
+
+static inline void ProcessOtherFlow(FlowSource_t	*fs, struct FlowNode *NewNode );
 
 pcapfile_t *OpenNewPcapFile(pcap_t *p, char *filename, pcapfile_t *pcapfile) {
 
@@ -113,7 +108,7 @@ pcapfile_t *OpenNewPcapFile(pcap_t *p, char *filename, pcapfile_t *pcapfile) {
 		// Create struct
 		pcapfile = calloc(1, sizeof(pcapfile_t));
 		if ( !pcapfile ) {
-			LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
+			LogError("malloc() error in %s line %d: %s", __FILE__, __LINE__, strerror(errno) );
 			return NULL;
 		}
 		pthread_mutex_init(&pcapfile->m_pbuff, NULL);
@@ -122,14 +117,14 @@ pcapfile_t *OpenNewPcapFile(pcap_t *p, char *filename, pcapfile_t *pcapfile) {
 		pcapfile->data_buffer = malloc(BUFFSIZE);
 		if ( !pcapfile->data_buffer ) {
 			free(pcapfile);
-			LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
+			LogError("malloc() error in %s line %d: %s", __FILE__, __LINE__, strerror(errno) );
 			return NULL;
 		}
 		pcapfile->alternate_buffer = malloc(BUFFSIZE);
 		if ( !pcapfile->data_buffer ) {
 			free(pcapfile->data_buffer);
 			free(pcapfile);
-			LogError("malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
+			LogError("malloc() error in %s line %d: %s", __FILE__, __LINE__, strerror(errno) );
 			return NULL;
 		}
 		pcapfile->data_ptr		 = pcapfile->data_buffer;
@@ -139,16 +134,21 @@ pcapfile_t *OpenNewPcapFile(pcap_t *p, char *filename, pcapfile_t *pcapfile) {
 	}
 
 	if ( filename ) {
-		pcapfile->pd = pcap_dump_open(p, filename);
+		FILE* pFile = fopen(filename, "wb"); 
+		if ( !pFile ) {
+			LogError("fopen() error in %s line %d: %s", __FILE__, __LINE__, strerror(errno) );
+			return NULL;
+		}
+		pcapfile->pd = pcap_dump_fopen(p, pFile);
 		if ( !pcapfile->pd ) {
 			LogError("Fatal: pcap_dump_open() failed for file '%s': %s", filename, pcap_geterr(p));
 			return NULL;
 		} else {
-			fflush((FILE *)pcapfile->pd);
-			pcapfile->pfd = fileno((FILE *)pcapfile->pd);
+			fflush(pFile);
+			pcapfile->pfd = fileno((FILE *)pFile);
 			return pcapfile;
 		}
-	} else 
+	} else
 		return pcapfile;
 
 } // End of OpenNewPcapFile
@@ -156,10 +156,7 @@ pcapfile_t *OpenNewPcapFile(pcap_t *p, char *filename, pcapfile_t *pcapfile) {
 int ClosePcapFile(pcapfile_t *pcapfile) {
 int err = 0;
 
-	if ( fclose((FILE *)pcapfile->pd) < 0 ) {
-		LogError("close() error in %s line %d: %s\n", __FILE__, __LINE__, strerror(errno) );
-		err = errno;
-	}
+	pcap_dump_close(pcapfile->pd);
 	pcapfile->pfd = -1;
 
 	return err;
@@ -196,7 +193,7 @@ void *_b;
 		if( pcap_stats(pcapfile->p, &p_stat) < 0) {
 			LogError("pcap_stats() failed: %s", pcap_geterr(pcapfile->p));
 		} else {
-			LogInfo("Packets received: %u, dropped: %u, dropped by interface: %u ", 
+			LogInfo("Packets received: %u, dropped: %u, dropped by interface: %u ",
 				p_stat.ps_recv, p_stat.ps_drop, p_stat.ps_ifdrop );
 		}
 	}
@@ -207,13 +204,6 @@ void PcapDump(pcapfile_t *pcapfile,  struct pcap_pkthdr *h, const u_char *sp) {
 struct pcap_sf_pkthdr sf_hdr;
 size_t	size = sizeof(struct pcap_sf_pkthdr) + h->caplen;
 
-/*
-	if ( pcapfile->pd)
-		pcap_dump((u_char *)pcapfile->pd, h, sp);
-	else
-		printf("NULL handle\n");
-	return;
-*/
 	if ( (pcapfile->data_size + size ) > BUFFSIZE ) {
 		void *_b;
 		// no space left in buffer - rotate buffers
@@ -252,7 +242,7 @@ size_t	size = sizeof(struct pcap_sf_pkthdr) + h->caplen;
 
 } // End of PcapDump
 
-static inline void ProcessTCPFlow(FlowSource_t	*fs, struct FlowNode *NewNode ) {
+static inline void ProcessTCPFlow(FlowSource_t *fs, struct FlowNode *NewNode ) {
 struct FlowNode *Node;
 
 	assert(NewNode->memflag == NODE_IN_USE);
@@ -267,14 +257,7 @@ struct FlowNode *Node;
 			// flush node
 			if ( StorePcapFlow(fs, NewNode) ) {
 				Remove_Node(NewNode);
-			} 
-		}
-
-		if ( !CacheCheck() ) {
-			uint32_t NumFlows;
-			LogError("Node cache exhausted! - Immediate flush - increase flow cache!!");	
-			NumFlows  = Flush_FlowTree(fs);
-			LogError("Flushed flows: %u", NumFlows);	
+			}
 		}
 
 		if ( Link_RevNode(NewNode)) {
@@ -296,8 +279,8 @@ struct FlowNode *Node;
 	// update existing flow
 	Node->flags |= NewNode->flags;
 	Node->packets++;
-	Node->bytes += NewNode->bytes; 
-	Node->t_last = NewNode->t_last; 
+	Node->bytes += NewNode->bytes;
+	Node->t_last = NewNode->t_last;
 	dbg_printf("Existing TCP flow: Packets: %u, Bytes: %u\n", Node->packets, Node->bytes);
 
 	if ( NewNode->fin == FIN_NODE) {
@@ -305,11 +288,11 @@ struct FlowNode *Node;
 		Node->fin = FIN_NODE;
 		if ( StorePcapFlow(fs, Node) ) {
 			Remove_Node(Node);
-		} 
+		}
 	} else {
 		Free_Node(NewNode);
 	}
- 
+
 
 } // End of ProcessTCPFlow
 
@@ -317,7 +300,7 @@ static inline void ProcessUDPFlow(FlowSource_t	*fs, struct FlowNode *NewNode ) {
 struct FlowNode *Node;
 
 	assert(NewNode->memflag == NODE_IN_USE);
-	// Flush DNS queries directly 
+	// Flush DNS queries directly
 	if ( NewNode->src_port == 53 || NewNode->dst_port == 53 ) {
 		StorePcapFlow(fs, NewNode);
 		Free_Node(NewNode);
@@ -330,14 +313,13 @@ struct FlowNode *Node;
 	if ( Node == NULL ) {
 		dbg_printf("New UDP flow: Packets: %u, Bytes: %u\n", NewNode->packets, NewNode->bytes);
 		return;
-	} 
+	}
 	assert(Node->memflag == NODE_IN_USE);
 
 	// update existing flow
 	Node->packets++;
-	Node->bytes += NewNode->bytes; 
-	Node->t_last = NewNode->t_last; 
-
+	Node->bytes += NewNode->bytes;
+	Node->t_last = NewNode->t_last;
 	dbg_printf("Existing UDP flow: Packets: %u, Bytes: %u\n", Node->packets, Node->bytes);
 
 	Free_Node(NewNode);
@@ -346,7 +328,7 @@ struct FlowNode *Node;
 
 static inline void ProcessICMPFlow(FlowSource_t	*fs, struct FlowNode *NewNode ) {
 
-	// Flush ICMP directly 
+	// Flush ICMP directly
 	StorePcapFlow(fs, NewNode);
 	dbg_printf("Flush ICMP flow: Packets: %u, Bytes: %u\n", NewNode->packets, NewNode->bytes);
 
@@ -355,15 +337,31 @@ static inline void ProcessICMPFlow(FlowSource_t	*fs, struct FlowNode *NewNode ) 
 } // End of ProcessICMPFlow
 
 static inline void ProcessOtherFlow(FlowSource_t *fs, struct FlowNode *NewNode ) {
+struct FlowNode *Node;
 
-	// Flush Other packets directly
-	StorePcapFlow(fs, NewNode);
-	dbg_printf("Flush Other flow: Proto: %u, Packets: %u, Bytes: %u\n", NewNode->proto, NewNode->packets, NewNode->bytes);
+	assert(NewNode->memflag == NODE_IN_USE);
+
+	// insert ESP/AH traffic
+	Node = Insert_Node(NewNode);
+	// if insert fails, the existing node is returned -> flow exists already
+	if ( Node == NULL ) {
+		dbg_printf("New flow IP proto: %u. Packets: %u, Bytes: %u\n",
+			NewNode->proto, NewNode->packets, NewNode->bytes);
+		return;
+	}
+	assert(Node->memflag == NODE_IN_USE);
+
+	// update existing flow
+	Node->packets++;
+	Node->bytes += NewNode->bytes;
+	Node->t_last = NewNode->t_last;
+	dbg_printf("Existing flow IP proto: %. Packets: %u, Bytes: %u\n",
+		NewNode->proto, Node->packets, Node->bytes);
 
 	Free_Node(NewNode);
 
-
 } // End of ProcessOtherFlow
+
 
 void ProcessFlowNode(FlowSource_t *fs, struct FlowNode *node) {
 
@@ -378,9 +376,8 @@ void ProcessFlowNode(FlowSource_t *fs, struct FlowNode *node) {
 		case IPPROTO_ICMPV6:
 			ProcessICMPFlow(fs, node);
 			break;
-		default: 
+		default:
 			ProcessOtherFlow(fs, node);
-
 	}
 
 } // End of ProcessFlowNode
@@ -391,10 +388,8 @@ struct ip 	  *ip;
 void		  *payload, *defragmented;
 uint32_t	  size_ip, offset, data_len, payload_len, bytes;
 uint16_t	  version, ethertype, proto;
-#ifdef DEVEL
 char		  s1[64];
 char		  s2[64];
-#endif
 static unsigned pkg_cnt = 0;
 
 	pkg_cnt++;
@@ -402,20 +397,14 @@ static unsigned pkg_cnt = 0;
 
 	pcap_dev->proc_stat.packets++;
 	offset = pcap_dev->linkoffset;
-
-	Node = New_Node();
-	if ( !Node ) {
-		pcap_dev->proc_stat.skipped++;
-		LogError("Node allocation error - skip packet");
-		return;
-	}
+	defragmented = NULL;
+	Node = NULL;
 
 	if ( pcap_dev->linktype == DLT_EN10MB ) {
 		ethertype = data[12] << 0x08 | data[13];
 		int	IEEE802 = ethertype <= 1500;
 		if ( IEEE802 ) {
 			pcap_dev->proc_stat.skipped++;
-			Free_Node(Node);
 			return;
 		}
 		REDO_LINK:
@@ -423,69 +412,75 @@ static unsigned pkg_cnt = 0;
 				case 0x800:	 // IPv4
 				case 0x86DD: // IPv6
 					break;
-				case 0x8100: {	// VLAN 
+				case 0x8100: {	// VLAN
 					do {
 						vlan_hdr_t *vlan_hdr = (vlan_hdr_t *)(data + offset);  // offset points to end of link layer
-						dbg_printf("VLAN ID: %u, type: 0x%x\n", ntohs(vlan_hdr->vlan_id), ntohs(vlan_hdr->type) );
+						dbg_printf("VLAN ID: %u, type: 0x%x\n",
+							ntohs(vlan_hdr->vlan_id), ntohs(vlan_hdr->type) );
 						ethertype = ntohs(vlan_hdr->type);
-/*
-pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
-	  pkt->vlans[pkt->vlan_count].cfi = (p[0] >> 4) & 1;
-	  pkt->vlans[pkt->vlan_count].vid = uint_16_be(p) & 0xfff;
-*/
 						offset += 4;
 					} while ( ethertype == 0x8100 );
 			
 					// redo ethertype evaluation
 					goto REDO_LINK;
 					} break;
-				case 0x806:	 // skip ARP
-					// silently skip ARP
-					pcap_dev->proc_stat.skipped++;
-					return;
-					break;
+				case 0x8847: { // MPLS
+					// unwind MPLS label stack
+					uint32_t *mpls = (uint32_t *)(data + offset);
+					offset += 4;
+					dbg_printf("MPLS label: %x\n", ntohl(*mpls) >> 8);
+					while ((offset < hdr->caplen) && ((ntohl(*mpls) & 0x100) == 0)) { // check for Bottom of stack
+						offset += 4;
+						mpls++;
+						dbg_printf("MPLS label: %x\n", ntohl(*mpls) >> 8);
+					}
+					uint8_t *hdr = (uint8_t *)data + offset;
+					if((*hdr >> 4) == 4)
+						ethertype = 0x0800;	// IPv4
+					else if((*hdr >> 4) == 6)
+						ethertype = 0x86DD;	// IPv6
+					else {
+						LogInfo("Unsupported protocol: 0x%x", *hdr >> 4);
+						goto END_FUNC;
+					}
+
+					// redo ethertype evaluation
+					goto REDO_LINK;
+					} break;
 				case 0x26:	 // ?? multicast router termination ??
+				case 0x32:	
+				case 0x806:	 // skip ARP
 				case 0x4305: // B.A.T.M.A.N. BATADV
 				case 0x886f: // MS NLB heartbeat
 				case 0x88a2: // ATA over ethernet
 				case 0x88cc: // CISCO LLDP
 				case 0x9000: // Loop
+				case 0x9003: 
+				case 0x8808: // Ethernet flow control
 				case 0x880b: // PPP - rfc 7042
+				case 0x6558: // Ethernet Bridge
 					pcap_dev->proc_stat.skipped++;
-					if ( Node->proto ) {
-						// if it's an encap which we do not understand yet - push tunnel
-						Push_Node(NodeList, Node);
-					} else {
-						pcap_dev->proc_stat.skipped++;
-						dbg_printf("Skip Ethertype 0x%x", ethertype);
-						Free_Node(Node);
-					}
-					return;
+					goto END_FUNC;
 					break;
 				default:
 					pcap_dev->proc_stat.unknown++;
-					LogError("Unsupported link type: 0x%x, packet: %u", ethertype, pkg_cnt);
-					Free_Node(Node);
-					return;
+					LogInfo("Unsupported ether type: 0x%x, packet: %u", ethertype, pkg_cnt);
+					goto END_FUNC;
 			}
+	} else if ( pcap_dev->linktype != DLT_RAW ) { // we can still process raw IP
+		LogInfo("Unsupported link type: 0x%x, packet: %u", pcap_dev->linktype, pkg_cnt);
+		return;
 	}
 
 	if (hdr->caplen < offset) {
 		pcap_dev->proc_stat.short_snap++;
-		LogError("Short packet: %u/%u", hdr->caplen, offset);
-		Free_Node(Node);
-		return;
+		LogInfo("Short packet: %u/%u", hdr->caplen, offset);
+		goto END_FUNC;
 	}
-
-	Node->t_first.tv_sec = hdr->ts.tv_sec;
-	Node->t_first.tv_usec = hdr->ts.tv_usec;
-	Node->t_last.tv_sec  = hdr->ts.tv_sec;
-	Node->t_last.tv_usec  = hdr->ts.tv_usec;
 
 	data	 = data + offset;
 	data_len = hdr->caplen - offset;
 	offset	 = 0;
-	defragmented = NULL;
 
 	// IP decoding
 	REDO_IPPROTO:
@@ -495,23 +490,22 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 		// REDO loop could result in a memory leak, if again IP is fragmented
 		// XXX memory leak to be fixed
 		LogError("Fragmentation memory leak triggered!");
+		goto END_FUNC;
 	}
 
 	ip  	= (struct ip *)(data + offset); // offset points to end of link layer
 	version = ip->ip_v;	 // ip version
 
 	if ( version == 6 ) {
-		uint64_t *addr;
 		struct ip6_hdr *ip6 = (struct ip6_hdr *) (data + offset);
 		size_ip = sizeof(struct ip6_hdr);
 		offset = size_ip;	// offset point to end of IP header
 
 		if ( data_len < size_ip ) {
-			LogError("Packet: %u Length error: data_len: %u < size IPV6: %u, captured: %u, hdr len: %u", 
+			LogInfo("Packet: %u Length error: data_len: %u < size IPV6: %u, captured: %u, hdr len: %u",
 				pkg_cnt, data_len, size_ip, hdr->caplen, hdr->len);	
 			pcap_dev->proc_stat.short_snap++;
-			Free_Node(Node);
-			return;
+			goto END_FUNC;
 		}
 
 		// XXX Extension headers not processed
@@ -529,11 +523,25 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 
 		payload = (void *)ip + size_ip;
 
-		addr = (uint64_t *)&ip6->ip6_src;
+		Node = New_Node();
+		if ( !Node ) {
+			pcap_dev->proc_stat.skipped++;
+			LogError("Node allocation error - skip packet");
+			return;
+		}
+		Node->t_first.tv_sec = hdr->ts.tv_sec;
+		Node->t_first.tv_usec = hdr->ts.tv_usec;
+		Node->t_last.tv_sec  = hdr->ts.tv_sec;
+		Node->t_last.tv_usec  = hdr->ts.tv_usec;
+
+		// keep compiler happy - get's optimized out anyway
+		void *p = (void *)&ip6->ip6_src;
+		uint64_t *addr = (uint64_t *)p;
 		Node->src_addr.v6[0] = ntohll(addr[0]);
 		Node->src_addr.v6[1] = ntohll(addr[1]);
 
-		addr = (uint64_t *)&ip6->ip6_dst;
+		p = (void *)&ip6->ip6_dst;
+		addr = (uint64_t *)p;
 		Node->dst_addr.v6[0] = ntohll(addr[0]);
 		Node->dst_addr.v6[1] = ntohll(addr[1]);
 		Node->version = AF_INET6;
@@ -545,18 +553,16 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 		offset = size_ip;	// offset point to end of IP header
 
 		if ( data_len < size_ip ) {
-			LogError("Packet: %u Length error: data_len: %u < size IPV4: %u, captured: %u, hdr len: %u", 
+			dbg_printf("Packet: %u Length error: data_len: %u < size IPV4: %u, captured: %u, hdr len: %u\n",
 				pkg_cnt, data_len, size_ip, hdr->caplen, hdr->len);	
 			pcap_dev->proc_stat.short_snap++;
-			Free_Node(Node);
-			return;
+			goto END_FUNC;
 		}
 
 		payload_len = ntohs(ip->ip_len);
-		dbg_printf("size IP hader: %u, len: %u, %u\n", size_ip, ip->ip_len, payload_len);
+		dbg_printf("size IP hader: %u, len: %u\n", size_ip, payload_len);
 
 		payload_len -= size_ip;	// ajust length compatibel IPv6
-		bytes 		= payload_len;
 		payload = (void *)ip + size_ip;
 		proto   = ip->ip_p;
 
@@ -575,25 +581,39 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			uint16_t ip_id = ntohs(ip->ip_id);
 #ifdef DEVEL
 			if ( frag_offset == 0 )
-				printf("Fragmented packet: first segement: ip_off: %u, frag_offset: %u\n", ip_off, frag_offset);
+				printf("Fragmented packet: first segement: ip_off: %u, frag_offset: %u\n",
+					ip_off, frag_offset);
 			if (( ip_off & IP_MF ) && frag_offset )
-				printf("Fragmented packet: middle segement: ip_off: %u, frag_offset: %u\n", ip_off, frag_offset);
+				printf("Fragmented packet: middle segement: ip_off: %u, frag_offset: %u\n",
+					ip_off, frag_offset);
 			if (( ip_off & IP_MF ) == 0  )
-				printf("Fragmented packet: last segement: ip_off: %u, frag_offset: %u\n", ip_off, frag_offset);
+				printf("Fragmented packet: last segement: ip_off: %u, frag_offset: %u\n",
+					ip_off, frag_offset);
 #endif
 			// fragmented packet
-			defragmented = IPFrag_tree_Update(hdr->ts.tv_sec, ip->ip_src.s_addr, ip->ip_dst.s_addr, 
+			defragmented = IPFrag_tree_Update(hdr->ts.tv_sec, ip->ip_src.s_addr, ip->ip_dst.s_addr,
 				ip_id, &payload_len, ip_off, payload);
 			if ( defragmented == NULL ) {
 				// not yet complete
-				dbg_printf("Fragmentation not yet completed\n");
-				Free_Node(Node);
-				return;
+				dbg_printf("Fragmentation not yet completed. Size %u bytes\n", payload_len);
+				goto END_FUNC;
 			}
-			dbg_printf("Fragmentation assembled\n");
+			dbg_printf("Fragmentation complete\n");
 			// packet defragmented - set payload to defragmented data
 			payload = defragmented;
-		} 
+		}
+		bytes 		= payload_len;
+
+		Node = New_Node();
+		if ( !Node ) {
+			pcap_dev->proc_stat.skipped++;
+			LogError("Node allocation error - skip packet");
+			return;
+		}
+		Node->t_first.tv_sec = hdr->ts.tv_sec;
+		Node->t_first.tv_usec = hdr->ts.tv_usec;
+		Node->t_last.tv_sec  = hdr->ts.tv_sec;
+		Node->t_last.tv_usec  = hdr->ts.tv_usec;
 
 		Node->src_addr.v6[0] = 0;
 		Node->src_addr.v6[1] = 0;
@@ -604,10 +624,9 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 		Node->dst_addr.v4 = ntohl(ip->ip_dst.s_addr);
 		Node->version = AF_INET;
 	} else {
-		LogError("ProcessPacket() Unsupprted protocol version: %i", version);
+		LogInfo("ProcessPacket() Unsupported protocol version: %i", version);
 		pcap_dev->proc_stat.unknown++;
-		Free_Node(Node);
-		return;
+		goto END_FUNC;
 	}
 
 	Node->packets = 1;
@@ -621,33 +640,24 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			struct udphdr *udp = (struct udphdr *)payload;
 			uint16_t UDPlen = ntohs(udp->uh_ulen);
 			if ( UDPlen < 8 ) {
-				LogError("UDP payload length error: %u bytes < 8\n",
-					UDPlen);
-				Free_Node(Node);
-				break;
-			}
-			uint32_t size_udp_payload = ntohs(udp->uh_ulen) - 8;
+				LogInfo("UDP payload length error: %u bytes < 8, SRC %s, DST %s",
+					UDPlen, inet_ntop(AF_INET, &ip->ip_src, s1, sizeof(s1)),
+					inet_ntop(AF_INET, &ip->ip_dst, s2, sizeof(s2)));
 
-			if ( (bytes == payload_len ) && (payload_len - sizeof(struct udphdr)) != size_udp_payload ) {
-				LogError("UDP payload legth error: Expected %u, have %u bytes\n",
-					size_udp_payload, (payload_len - (unsigned)sizeof(struct udphdr)));
 				Free_Node(Node);
 				break;
 			}
+
 			payload = payload + sizeof(struct udphdr);
 			payload_len -= sizeof(struct udphdr);
-			dbg_printf("UDP: size: %u, SRC: %i, DST: %i\n", 
+			dbg_printf("UDP: size: %u, SRC: %i, DST: %i\n",
 				size_udp_payload, ntohs(udp->uh_sport), ntohs(udp->uh_dport));
 
+			Node->bytes = payload_len;
 			Node->flags = 0;
 			Node->src_port = ntohs(udp->uh_sport);
 			Node->dst_port = ntohs(udp->uh_dport);
 
-			if ( hdr->caplen == hdr->len ) {
-				// process payload of full packets
-				if ( (bytes == payload_len) && (Node->src_port == 53 || Node->dst_port == 53) ) 
- 					content_decode_dns(Node, payload, payload_len);
-			}
 			Push_Node(NodeList, Node);
 			} break;
 		case IPPROTO_TCP: {
@@ -656,7 +666,6 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			size_tcp = tcp->th_off << 2;
 
 			if ( payload_len < size_tcp ) {
-				LogError("TCP header length error: len: %u < size TCP header: %u", payload_len, size_tcp);	
 				pcap_dev->proc_stat.short_snap++;
 				Free_Node(Node);
 				break;
@@ -665,7 +674,7 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			payload = payload + size_tcp;
 			payload_len -= size_tcp;
 			dbg_printf("Size TCP header: %u, size TCP payload: %u ", size_tcp, payload_len);
-			dbg_printf("src %i, DST %i, flags %i : ", 
+			dbg_printf("src %i, DST %i, flags %i : ",
 				ntohs(tcp->th_sport), ntohs(tcp->th_dport), tcp->th_flags);
 
 #ifdef DEVEL
@@ -688,28 +697,26 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			struct icmp *icmp = (struct icmp *)payload;
 
 			Node->dst_port = (icmp->icmp_type << 8 ) + icmp->icmp_code;
-			dbg_printf("IPv%d ICMP proto: %u, type: %u, code: %u\n", version, ip->ip_p, icmp->icmp_type, icmp->icmp_code);
+			dbg_printf("IPv%d ICMP proto: %u, type: %u, code: %u\n",
+				version, ip->ip_p, icmp->icmp_type, icmp->icmp_code);
+			Node->bytes -= sizeof(struct udphdr);
 			Push_Node(NodeList, Node);
 			} break;
 		case IPPROTO_ICMPV6: {
 			struct icmp6_hdr *icmp6 = (struct icmp6_hdr *)payload;
 
 			Node->dst_port = (icmp6->icmp6_type << 8 ) + icmp6->icmp6_code;
-			dbg_printf("IPv%d ICMP proto: %u, type: %u, code: %u\n", version, ip->ip_p, icmp6->icmp6_type, icmp6->icmp6_code);
+			dbg_printf("IPv%d ICMP proto: %u, type: %u, code: %u\n",
+				version, ip->ip_p, icmp6->icmp6_type, icmp6->icmp6_code);
 			Push_Node(NodeList, Node);
 			} break;
 		case IPPROTO_IPV6: {
 			uint32_t size_inner_ip = sizeof(struct ip6_hdr);
 
 			if ( payload_len < size_inner_ip ) {
-				LogError("IPIPv6 tunnel header length error: len: %u < size inner IP: %u", payload_len, size_inner_ip);	
 				pcap_dev->proc_stat.short_snap++;
-				if ( defragmented ) {
-					free(defragmented);
-					defragmented = NULL;
-				}
 				Free_Node(Node);
-				return;
+				goto END_FUNC;
 			}
 			offset   = 0;
 			data 	 = payload;
@@ -730,7 +737,6 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			uint32_t size_inner_ip = (inner_ip->ip_hl << 2);
 
 			if ( payload_len < size_inner_ip ) {
-				LogError("IPIP tunnel header length error: len: %u < size inner IP: %u", payload_len, size_inner_ip);	
 				pcap_dev->proc_stat.short_snap++;
 				Free_Node(Node);
 				break;
@@ -755,7 +761,6 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			uint32_t gre_hdr_size = sizeof(gre_hdr_t); // offset points to end of inner IP
 
 			if ( payload_len < gre_hdr_size ) {
-				LogError("GRE tunnel header length error: len: %u < size GRE hdr: %u", payload_len, gre_hdr_size);	
 				pcap_dev->proc_stat.short_snap++;
 				Free_Node(Node);
 				break;
@@ -776,13 +781,13 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 			goto REDO_LINK;
 
 			} break;
-		default: 
-			// not handled protocol - simply save node
+		default:
+			// other IP protocols are treated as stream such as ESP etc.
 			Push_Node(NodeList, Node);
-			pcap_dev->proc_stat.unknown++;
 			break;
 	}
 
+	END_FUNC:
 	if ( defragmented ) {
 		free(defragmented);
 		defragmented = NULL;
@@ -791,6 +796,3 @@ pkt->vlans[pkt->vlan_count].pcp = (p[0] >> 5) & 7;
 
 
 } // End of ProcessPacket
-
-
-

@@ -1,6 +1,5 @@
 /*
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2013, Peter Haag
+ *  Copyright (c) 2019-2021, Peter Haag
  *  All rights reserved.
  *  
  *  Redistribution and use in source and binary forms, with or without 
@@ -27,13 +26,49 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author$
- *
- *  $Id$
- *
- *  $LastChangedRevision$
- *  
  */
 
-void content_decode_dns(struct FlowNode	*node, uint8_t *payload, uint32_t payload_size);
+#ifndef _OUTPUT_UTIL_H
+#define _OUTPUT_UTIL_H 1
 
+#include <stdbool.h>
+
+typedef void (*printer_t)(void *, char **, int);
+typedef void (*func_prolog_t)(void);
+typedef void (*func_epilog_t)(void);
+
+typedef struct outputParams_s {
+	bool printPlain;
+	bool doTag;
+	bool quiet;
+	bool modePipe, modeCsv, modeJson;
+	int  topN;
+} outputParams_t;
+
+typedef struct printmap_s {
+	char		  *printmode;	// name of the output format
+	printer_t	  func_record;	// prints the record
+	func_prolog_t func_prolog;	// prints the output prolog
+	func_epilog_t func_epilog;	// prints the output epilog
+	char		  *Format;		// output format definition
+} printmap_t;
+
+char *ProtoString(uint8_t protoNum, uint32_t plainNumbers);
+
+int ProtoNum(char *protoString);
+
+char *FlagsString(uint16_t flags);
+
+char *biFlowString(uint8_t biFlow);
+
+char *FlowEndString(uint8_t biFlow);
+
+void CondenseV6(char *s);
+
+char *FwEventString(int event);
+
+char *EventString(int event);
+
+char *EventXString(int xevent);
+
+#endif // _OUTPUT_UTIL_H

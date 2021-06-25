@@ -1,8 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
- *  Copyright (c) 2016, Peter Haag
- *  Copyright (c) 2014, Peter Haag
- *  Copyright (c) 2009, Peter Haag
+ *  Copyright (c) 2009-2020, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -51,19 +48,20 @@
 #endif
 
 #include "util.h"
+#include "nfdump.h"
 #include "nffile.h"
 #include "nfx.h"
 #include "nfnet.h"
-#include "nf_common.h"
+#include "output_raw.h"
 #include "bookkeeper.h"
 #include "collector.h"
 #include "exporter.h"
 #include "netflow_v1.h"
 
-extern int verbose;
 extern extension_descriptor_t extension_descriptor[];
 
 /* module limited globals */
+static int verbose;
 static extension_info_t v1_extension_info;		// common for all v1 records
 static uint16_t v1_output_record_size;
 
@@ -80,10 +78,10 @@ typedef struct v1_block_s {
 #define V1_BLOCK_DATA_SIZE (sizeof(v1_block_t) - sizeof(uint32_t))
 
 typedef struct exporter_v1_s {
-	// identical to generic_exporter_t
+	// identical to exporter_t
 	struct exporter_v1_s *next;
 
-	// generic exporter information
+	// exporter information
 	exporter_info_record_t info;
 
 	uint64_t	packets;			// number of packets sent by this exporter
@@ -91,8 +89,8 @@ typedef struct exporter_v1_s {
 	uint32_t	sequence_failure;	// number of sequence failues
 	uint32_t	padding_errors;		// number of sequence failues
 
-	generic_sampler_t		*sampler;
-	// End of generic_exporter_t
+	sampler_t		*sampler;
+	// End of exporter_t
 
 	// extension map
 	extension_map_t 	 *extension_map;
@@ -105,11 +103,12 @@ static inline exporter_v1_t *GetExporter(FlowSource_t *fs, netflow_v1_header_t *
 
 #include "nffile_inline.c"
 
-int Init_v1(void) {
+int Init_v1(int v) {
 int i, id, map_index;
 int extension_size;
 uint16_t	map_size;
 
+	verbose = v;
 	// prepare v1 extension map
 	v1_extension_info.map		   = NULL;
 	v1_extension_info.next		   = NULL;
@@ -139,7 +138,7 @@ uint16_t	map_size;
 	if ( ( map_size & 0x3 ) != 0 )
 		map_size += 2;
 
-	// Create a generic netflow v1 extension map
+	// Create a netflow v1 extension map
 	v1_extension_info.map = (extension_map_t *)malloc((size_t)map_size);
 	if ( !v1_extension_info.map ) {
 		LogError("Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
@@ -203,7 +202,7 @@ char ipstr[IP_STRING_LEN];
 	(*e)->padding_errors	= 0;
 	(*e)->sampler			= NULL;
 
-	// copy the v1 generic extension map
+	// copy the v1 extension map
 	(*e)->extension_map		= (extension_map_t *)malloc(v1_extension_info.map->size);
 	if ( !(*e)->extension_map ) {
 		LogError("Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
@@ -334,13 +333,15 @@ char		*string;
 	  			common_record->size			= v1_output_record_size;
 
 				// v1 common fields
-	  			common_record->srcport		= ntohs(v1_record->srcport);
-	  			common_record->dstport		= ntohs(v1_record->dstport);
-	  			common_record->tcp_flags	= v1_record->tcp_flags;
-	  			common_record->prot			= v1_record->prot;
-	  			common_record->tos			= v1_record->tos;
-	  			common_record->fwd_status 	= 0;
-	  			common_record->reserved 	= 0;
+	  			common_record->srcport		 = ntohs(v1_record->srcport);
+	  			common_record->dstport		 = ntohs(v1_record->dstport);
+	  			common_record->tcp_flags	 = v1_record->tcp_flags;
+	  			common_record->prot			 = v1_record->prot;
+	  			common_record->tos			 = v1_record->tos;
+	  			common_record->fwd_status 	 = 0;
+	  			common_record->nfversion 	 = 1;
+	  			common_record->biFlowDir	 = 0;
+	  			common_record->flowEndReason = 0;
 
 				// v1 typed data as fixed struct v1_block
 	  			v1_block->srcaddr	= ntohl(v1_record->srcaddr);
@@ -455,7 +456,7 @@ char		*string;
 					master_record_t master_record;
 					memset((void *)&master_record, 0, sizeof(master_record_t));
 					ExpandRecord_v2((common_record_t *)common_record, &v1_extension_info, &(exporter->info), &master_record);
-				 	format_file_block_record(&master_record, &string, 0);
+				 	flow_record_to_raw(&master_record, &string, 0);
 					printf("%s\n", string);
 				}
 

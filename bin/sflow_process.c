@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2017, Peter Haag
+ *  Copyright (c) 2017-2021, Peter Haag
  *  All rights reserved.
  *  
  *  Redistribution and use in source and binary forms, with or without 
@@ -64,6 +64,7 @@
 #include <stdint.h>
 #endif
 
+#include "nfdump.h"
 #include "sflow.h" /* sFlow v5 */
 #include "sflow_v2v4.h" /* sFlow v2/4 */
 #include "util.h"
@@ -126,6 +127,10 @@ static void readExtendedProxySocket6(SFSample *sample);
 static void readExtendedDecap(SFSample *sample, char *prefix);
 static void readExtendedVNI(SFSample *sample, char *prefix);
 static void readExtendedTCPInfo(SFSample *sample);
+static void readExtendedEntities(SFSample *sample);
+static void readExtendedEgressQueue(SFSample *sample);
+static void readExtendedTransitDelay(SFSample *sample);
+static void readExtendedQueueDepth(SFSample *sample);
 static void readFlowSample_v2v4(SFSample *sample, FlowSource_t *fs, int verbose);
 static void readFlowSample(SFSample *sample, int expanded, FlowSource_t *fs, int verbose);
 
@@ -428,10 +433,12 @@ uint8_t *start = sample->header;
 uint8_t *end = start + sample->headerLen;
 uint8_t *ptr = start;
 uint16_t type_len;
+uint32_t vlanNum=0;
 
 	/* assume not found */
 	sample->gotIPV4 = NO;
 	sample->gotIPV6 = NO;
+	sample->mpls_num_labels = 0;
 
 	if((end - ptr) < NFT_ETHHDR_SIZ)
 		/* not enough for an Ethernet header */
@@ -446,7 +453,11 @@ uint16_t type_len;
 	type_len = (ptr[0] << 8) + ptr[1];
 	ptr += 2;
 
-	if(type_len == 0x8100) {
+	while(type_len == 0x8100
+	|| type_len == 0x88A8
+	|| type_len == 0x9100
+	|| type_len == 0x9200
+	|| type_len == 0x9300) {
 		if((end - ptr) < 4)
 			/* not enough for an 802.1Q header */
 			return;
@@ -463,12 +474,19 @@ uint16_t type_len;
 		/* |   pri  | c |		 vlan-id		| */
 		/*  ------------------------------------- */
 		/* [priority = 3bits] [Canonical Format Flag = 1bit] [vlan-id = 12 bits] */
-		dbg_printf("decodedVLAN %u\n", vlan);
-		dbg_printf("decodedPriority %u\n", priority);
+		if(vlanNum == 0) {
+			dbg_printf("decodedVLAN %u\n", vlan);
+			dbg_printf("decodedPriority %u\n", priority);
+		}
+		else {
+			dbg_printf("decodedVLAN.%u %u\n", vlanNum, vlan);
+			dbg_printf("decodedPriority.%u %u\n", vlanNum, vlan);
+		}
 		sample->in_vlan = vlan;
 		/* now get the type_len again (next two bytes) */
 		type_len = (ptr[0] << 8) + ptr[1];
 		ptr += 2;
+		vlanNum++;
 	}
 
 	/* now we're just looking for IP */
@@ -508,6 +526,27 @@ uint16_t type_len;
 			} else
 				return;
 		}
+	}
+
+	// MPLS stack
+	if(type_len == 0x8847) { 
+		// unwind MPLS label stack
+		int mpls_num_labels = 0;
+		sample->mpls_label[mpls_num_labels++] = ntohl(*((uint32_t *)ptr)) >> 8;
+		ptr += 2;
+		while (((end - ptr)>0) && (ptr[0] & 0x1) == 0) { // check for Bottom of stack
+			ptr += 2;
+			if ( mpls_num_labels < 10 )
+				sample->mpls_label[mpls_num_labels++] = ntohl(*((uint32_t *)ptr)) >> 8;
+			ptr += 2;
+			sample->mpls_num_labels++;
+		}
+		ptr += 2;	// point to IP header
+		sample->mpls_num_labels = mpls_num_labels > 10 ? 10 : mpls_num_labels;
+		if((*ptr >> 4) == 4)
+			type_len = 0x0800;	// IPv4
+		if((*ptr >> 4) == 6)
+			type_len = 0x86DD;	// IPv6
 	}
 
 	/* assume type_len is an ethernet-type now */
@@ -772,15 +811,13 @@ uint8_t *ptr = start;
 		}
 
 		// get the tos (priority)
-		sample->dcd_ipTos = *ptr++ & 15;
+		sample->dcd_ipTos = ((ptr[0] & 15) << 4) + (ptr[1] >> 4);
+		ptr++;
 		dbg_printf("IPTOS %u\n", sample->dcd_ipTos);
 
-		// 24-bit label
-		label = *ptr++;
-		label <<= 8;
-		label += *ptr++;
-		label <<= 8;
-		label += *ptr++;
+		// 20-bit label
+		label = ((ptr[0] & 15) << 16) + (ptr[1] << 8) + ptr[2];
+		ptr += 3;
 		dbg_printf("IP6_label 0x%x\n", label);
 
 		// payload
@@ -822,12 +859,11 @@ uint8_t *ptr = start;
 				// nextHeader == 50 || // encryption - don't bother coz we'll not be able to read any further
 				nextHeader == 51 || // auth
 				nextHeader == 60) { // destination options
-			uint32_t optionLen, skip;
-			dbg_printf("IP6HeaderExtension: %d\n", nextHeader);
+			uint32_t optionLen;
+			dbg_printf("IP6HeaderExtension %d\n", nextHeader);
 			nextHeader = ptr[0];
 			optionLen = 8 * (ptr[1] + 1);  // second byte gives option len in 8-byte chunks, not counting first 8
-			skip = optionLen - 2;
-			ptr += skip;
+			ptr += optionLen;
 			if(ptr > end)
 				return; // ran off the end of the header
 		}
@@ -1500,7 +1536,6 @@ static void readFlowSample_header(SFSample *sample)
   }
   sample->headerLen = getData32(sample);
   dbg_printf("headerLen %u\n", sample->headerLen);
-  
   sample->header = (uint8_t *)sample->datap; /* just point at the header */
   skipBytes(sample, sample->headerLen);
   {
@@ -2057,6 +2092,53 @@ static void readExtendedTCPInfo(SFSample *sample)
   sf_log_next32(sample, "tcpinfo_send_congestion_win");
   sf_log_next32(sample, "tcpinfo_reordering");
   sf_log_next32(sample, "tcpinfo_rtt_uS_min");
+}
+
+/*_________________----------------------------__________________
+  _________________    readExtendedEntities    __________________
+  -----------------____________________________------------------
+*/
+
+static void readExtendedEntities(SFSample *sample)
+{
+  dbg_printf("extendedType entities\n");
+  sf_log_next32(sample, "entities_src_class");
+  sf_log_next32(sample, "entities_src_index");
+  sf_log_next32(sample, "entities_dst_class");
+  sf_log_next32(sample, "entities_dst_index");
+}
+
+/*_________________----------------------------__________________
+  _________________    readExtendedEgressQueue __________________
+  -----------------____________________________------------------
+*/
+
+static void readExtendedEgressQueue(SFSample *sample)
+{
+  dbg_printf("extendedType egress_queue\n");
+  sf_log_next32(sample, "egress_queue_id");
+}
+
+/*_________________----------------------------__________________
+  _________________  readExtendedTransitDelay  __________________
+  -----------------____________________________------------------
+*/
+
+static void readExtendedTransitDelay(SFSample *sample)
+{
+  dbg_printf("extendedType transit_delay\n");
+  sf_log_next32(sample, "transit_delay_nS");
+}
+
+/*_________________----------------------------__________________
+  _________________  readExtendedQueueDepth    __________________
+  -----------------____________________________------------------
+*/
+
+static void readExtendedQueueDepth(SFSample *sample)
+{
+  dbg_printf("extendedType queue_depth\n");
+  sf_log_next32(sample, "queue_depth_bytes");
 }
 
 #ifdef DEVEL
@@ -3374,8 +3456,7 @@ static void readFlowSample_v2v4(SFSample *sample, FlowSource_t *fs, int verbose)
 		}
 	}
 
-	if(sample->gotIPV4 || sample->gotIPV6) 
-		StoreSflowRecord(sample, fs);
+	StoreSflowRecord(sample, fs);
 
 	if ( verbose ) 
 		writeFlowLine(sample);
@@ -3507,6 +3588,10 @@ uint8_t *sampleStart;
 			case SFLFLOW_EX_VNI_OUT: readExtendedVNI(sample, "out_"); break;
 			case SFLFLOW_EX_VNI_IN: readExtendedVNI(sample, "in_"); break;
 			case SFLFLOW_EX_TCP_INFO: readExtendedTCPInfo(sample); break;
+			case SFLFLOW_EX_ENTITIES: readExtendedEntities(sample); break;
+			case SFLFLOW_EX_EGRESS_Q: readExtendedEgressQueue(sample); break;
+			case SFLFLOW_EX_TRANSIT: readExtendedTransitDelay(sample); break;
+			case SFLFLOW_EX_Q_DEPTH: readExtendedQueueDepth(sample); break;
 			default: skipTLVRecord(sample, tag, length, "flow_sample_element"); break;
 			}
 			lengthCheck(sample, "flow_sample_element", start, length);
@@ -3514,8 +3599,7 @@ uint8_t *sampleStart;
 	}
 	lengthCheck(sample, "flow_sample", sampleStart, sampleLength);
 
- 	if ( sample->gotIPV4 || sample->gotIPV6 )
-		StoreSflowRecord(sample, fs);
+	StoreSflowRecord(sample, fs);
 
 	/* or line-by-line output... */
 	if ( verbose ) 
@@ -3563,7 +3647,11 @@ uint32_t samplesInPacket, samp;
 	dbg_printf("samplesInPacket %u\n", samplesInPacket);
 
 	/* now iterate and pull out the flows and counters samples */
+	void *sampleData = (void *)sample + sampleDataOffset;
 	for(samp = 0; samp < samplesInPacket; samp++) {
+		// fix bug sflowtool */
+		memset(sampleData, 0, sizeof(SFSample)-sampleDataOffset);
+
 		if((uint8_t *)sample->datap >= sample->endp) {
 			LogError("SFLOW: readSFlowDatagram() unexpected end of datagram after sample %d of %d\n", samp, samplesInPacket);
 			return;
